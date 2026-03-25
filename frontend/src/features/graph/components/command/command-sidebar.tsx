@@ -10,13 +10,16 @@ import { DateDisplay } from '@/components/shared/date-display';
 
 interface CommandeClient {
   ofFinalId: string;
-  client: string;
-  label: string;
+  clientNom: string;
+  clientRef: string;
+  articleLabel: string;
   dateDebut: string;
   dateFin: string;
-  statut: string;
-  marginFloat?: number;
-  alertCount?: number;
+  status: string;
+  margin: number;
+  alertCount: number;
+  sousOfCount: number;
+  achatCount: number;
 }
 
 const tensionLabels: Record<string, string> = {
@@ -27,19 +30,25 @@ const tensionLabels: Record<string, string> = {
 };
 
 export function CommandSidebar() {
-  const { data, isLoading } = useCommandesClientsQuery();
+  const { data: rawData, isLoading } = useCommandesClientsQuery();
   const { graphNav, goToCommand } = useGraphNavigation();
   const [search, setSearch] = useState('');
 
-  const commandes: CommandeClient[] = data ?? [];
+  // L'API retourne { data: [...] } - extraire le tableau
+  const commandes: CommandeClient[] = useMemo(() => {
+    if (!rawData) return [];
+    if (Array.isArray(rawData)) return rawData;
+    if (rawData.data && Array.isArray(rawData.data)) return rawData.data;
+    return [];
+  }, [rawData]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return commandes;
     const lower = search.toLowerCase();
     return commandes.filter(
       (c) =>
-        c.client.toLowerCase().includes(lower) ||
-        c.label.toLowerCase().includes(lower) ||
+        (c.clientNom ?? '').toLowerCase().includes(lower) ||
+        (c.articleLabel ?? '').toLowerCase().includes(lower) ||
         c.ofFinalId.toLowerCase().includes(lower),
     );
   }, [commandes, search]);
@@ -108,14 +117,13 @@ export function CommandSidebar() {
 
         {filtered.map((cmd) => {
           const isSelected = graphNav.commandOfFinalId === cmd.ofFinalId;
-          const margin = cmd.marginFloat ?? 0;
+          const margin = cmd.margin ?? 0;
           const tension = getTensionLevel(margin);
-          const alertCount = cmd.alertCount ?? 0;
 
           return (
             <button
               key={cmd.ofFinalId}
-              onClick={() => goToCommand(cmd.ofFinalId, cmd.client)}
+              onClick={() => goToCommand(cmd.ofFinalId, cmd.clientNom ?? cmd.ofFinalId)}
               className={cn(
                 'mb-1 w-full cursor-pointer rounded-lg border-l-4 p-2.5 text-left transition-colors',
                 isSelected ? 'border-l-4' : 'border-l-transparent',
@@ -131,9 +139,9 @@ export function CommandSidebar() {
                   className="truncate text-xs font-semibold"
                   style={{ color: 'var(--pp-navy)' }}
                 >
-                  {cmd.client}
+                  {cmd.clientNom ?? cmd.ofFinalId}
                 </span>
-                {alertCount > 0 && (
+                {cmd.alertCount > 0 && (
                   <span className="flex items-center gap-0.5">
                     <AlertTriangleIcon
                       className="h-3 w-3"
@@ -143,13 +151,13 @@ export function CommandSidebar() {
                       className="text-[10px] font-semibold"
                       style={{ color: 'var(--pp-amber)' }}
                     >
-                      {alertCount}
+                      {cmd.alertCount}
                     </span>
                   </span>
                 )}
               </div>
 
-              {/* OF label */}
+              {/* Article label */}
               <div className="mt-0.5 flex items-center gap-1">
                 <PackageIcon
                   className="h-3 w-3 shrink-0"
@@ -159,7 +167,7 @@ export function CommandSidebar() {
                   className="truncate text-[10px]"
                   style={{ color: 'var(--pp-text-secondary)' }}
                 >
-                  {cmd.label}
+                  {cmd.articleLabel}
                 </span>
               </div>
 
@@ -175,7 +183,7 @@ export function CommandSidebar() {
 
               {/* Footer: status + margin */}
               <div className="mt-1.5 flex items-center gap-1.5">
-                <OfStatusBadge statut={cmd.statut} />
+                <OfStatusBadge statut={cmd.status} />
                 <Badge
                   className="text-[10px]"
                   style={{
