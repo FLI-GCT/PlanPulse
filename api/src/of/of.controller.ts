@@ -13,6 +13,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from 'src/_shared/adapters/prisma/prisma.service';
 import { PropagationService } from 'src/graph/services/propagation.service';
 import { CriticalPathService } from 'src/graph/services/critical-path.service';
+import { GraphService } from 'src/graph/services/graph.service';
 import { OfApi } from './_contract';
 
 @ApiTags('OF')
@@ -22,7 +23,92 @@ export class OfController {
     private readonly prisma: PrismaService,
     private readonly propagationService: PropagationService,
     private readonly criticalPathService: CriticalPathService,
+    private readonly graphService: GraphService,
   ) {}
+
+  @Get('commandes-clients')
+  @ApiOperation({ summary: 'Lister les commandes clients (OF racines) avec marges et compteurs' })
+  async getCommandesClients() {
+    const rootOfs = await this.prisma.ordreFabrication.findMany({
+      where: { parentOfId: null },
+      include: {
+        article: true,
+        cacheMarge: true,
+        sousOfs: { select: { id: true } },
+      },
+      orderBy: { dateDebutPrevue: 'asc' },
+    });
+
+    // Compter les achats par OF racine via les aretes du graphe en memoire
+    const result: Array<{
+      clientNom: string;
+      clientRef: string;
+      ofFinalId: string;
+      articleLabel: string;
+      dateDebut: string;
+      dateFin: string;
+      margin: number;
+      status: string;
+      alertCount: number;
+      sousOfCount: number;
+      achatCount: number;
+    }> = [];
+    for (const of_ of rootOfs) {
+      // Compter les achats via le graphe : parcourir les descendants et compter les achats
+      let achatCount = 0;
+      const visited = new Set<string>();
+      const queue = [of_.id];
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (visited.has(current)) continue;
+        visited.add(current);
+
+        const succs = this.graphService.getSuccessors(current);
+        const preds = this.graphService.getPredecessors(current);
+        for (const edge of [...succs, ...preds]) {
+          const otherId = edge.sourceId === current ? edge.targetId : edge.sourceId;
+          if (visited.has(otherId)) continue;
+          const node = this.graphService.getNode(otherId);
+          if (!node) continue;
+          if (node.type === 'achat') {
+            achatCount++;
+            visited.add(otherId);
+          } else if (node.type === 'of' && edge.typeLien === 'NOMENCLATURE') {
+            queue.push(otherId);
+          }
+        }
+      }
+
+      // Compter les alertes pour cet OF
+      const alertes = await this.prisma.alerte.findMany({
+        where: { dismissed: false },
+      });
+      let alertCount = 0;
+      for (const a of alertes) {
+        const noeuds = a.noeuds as string[];
+        if (Array.isArray(noeuds) && noeuds.includes(of_.id)) {
+          alertCount++;
+        }
+      }
+
+      result.push({
+        clientNom: of_.clientNom ?? of_.article?.label ?? of_.id,
+        clientRef: of_.clientRef ?? '',
+        ofFinalId: of_.id,
+        articleLabel: of_.article?.label ?? '',
+        dateDebut: of_.dateDebutPrevue.toISOString(),
+        dateFin: of_.dateFinPrevue.toISOString(),
+        margin: of_.cacheMarge?.floatTotal ?? 0,
+        status: of_.statut,
+        alertCount,
+        sousOfCount: of_.sousOfs.length,
+        achatCount,
+      });
+    }
+
+    return { data: result };
+  }
 
   @Get()
   @ApiOperation({ summary: 'Lister les ordres de fabrication avec pagination et filtres' })

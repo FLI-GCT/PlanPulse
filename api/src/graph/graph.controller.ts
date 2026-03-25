@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, Body, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { GraphService } from './services/graph.service';
 import { CriticalPathService } from './services/critical-path.service';
@@ -74,5 +74,68 @@ export class GraphController {
       nodes: this.graph.getNodeCount(),
       edges: this.graph.getEdgeCount(),
     };
+  }
+
+  @Get('strategic')
+  @ApiOperation({ summary: 'Vue strategique : grouper les OF par critere (client, semaine, article, priorite)' })
+  async getStrategicView(
+    @Query('groupBy') groupBy: string,
+  ) {
+    const validGroupBy = ['client', 'semaine', 'article', 'priorite'] as const;
+    if (!validGroupBy.includes(groupBy as typeof validGroupBy[number])) {
+      throw new BadRequestException(
+        `Parametre groupBy invalide : '${groupBy}'. Valeurs acceptees : ${validGroupBy.join(', ')}`,
+      );
+    }
+    return this.graph.getStrategicView(groupBy as 'client' | 'semaine' | 'article' | 'priorite');
+  }
+
+  @Get('flows')
+  @ApiOperation({ summary: 'Vue flux : tracer le chemin complet de chaque commande client' })
+  async getFlowsView() {
+    return this.graph.getFlowsView();
+  }
+
+  @Get('subgraph')
+  @ApiOperation({ summary: 'Extraction de sous-graphe parametrique avec gestion des achats partages' })
+  getSubgraphParametric(
+    @Query('rootId') rootId: string,
+    @Query('depth') depthStr: string,
+    @Query('direction') direction: string,
+  ) {
+    if (!rootId) {
+      throw new BadRequestException('Parametre rootId requis');
+    }
+
+    const depth = depthStr ? parseInt(depthStr, 10) : 3;
+    if (isNaN(depth) || depth < 1 || depth > 20) {
+      throw new BadRequestException('Parametre depth doit etre un entier entre 1 et 20');
+    }
+
+    const validDirections = ['ancestors', 'descendants', 'both'] as const;
+    const dir = (direction ?? 'both') as typeof validDirections[number];
+    if (!validDirections.includes(dir)) {
+      throw new BadRequestException(
+        `Parametre direction invalide : '${direction}'. Valeurs acceptees : ${validDirections.join(', ')}`,
+      );
+    }
+
+    const node = this.graph.getNode(rootId);
+    if (!node) {
+      throw new BadRequestException(`Noeud '${rootId}' introuvable dans le graphe`);
+    }
+
+    return this.graph.getParametricSubgraph(rootId, depth, dir);
+  }
+
+  @Post('question')
+  @ApiOperation({ summary: 'Repondre a une question contextuelle sur le graphe (why-late, what-depends, critical-week, endangered-purchases)' })
+  async answerQuestion(
+    @Body() body: { type: string; targetId?: string; params?: { delta?: number; week?: string } },
+  ) {
+    if (!body.type) {
+      throw new BadRequestException('Le champ type est requis');
+    }
+    return this.graph.answerQuestion(body.type, body.targetId, body.params);
   }
 }

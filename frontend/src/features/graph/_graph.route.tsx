@@ -2,14 +2,40 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Spinner } from '@fli-dgtf/flow-ui';
 import { NetworkIcon } from 'lucide-react';
 import { useGraphInitialLoad } from '@/providers/state/use-graph-initial-load';
-import { DagCanvas } from './components/dag-canvas';
+import { useGraphNavigation } from './hooks/use-graph-navigation';
+import { GraphBreadcrumb } from './components/graph-breadcrumb';
+import { CommandGraph } from './components/command/command-graph';
+import { CommandSidebar } from './components/command/command-sidebar';
+import { FocusGraph } from './components/focus/focus-graph';
+import { QuestionView } from './components/question/question-view';
+import { StrategicToolbar } from './components/strategic/strategic-toolbar';
+import { BubbleMap } from './components/strategic/bubble-map';
+import { FlowView } from './components/strategic/flow-view';
+import { useUiStore } from '@/providers/state/ui-store';
 
 export const Route = createFileRoute('/_layout/graph')({
   component: GraphView,
 });
 
+// ── Strategic view (Level 1) ─────────────────────────────────────
+function StrategicView() {
+  const variant = useUiStore((s) => s.graphNav.strategicVariant);
+
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <StrategicToolbar />
+      <div className="flex-1 overflow-hidden">
+        {variant === 'bubbles' && <BubbleMap />}
+        {variant === 'flows' && <FlowView />}
+      </div>
+    </div>
+  );
+}
+
+// ── Main graph view with level-based routing ─────────────────────
 function GraphView() {
   const { isLoading } = useGraphInitialLoad();
+  const { graphNav } = useGraphNavigation();
 
   if (isLoading) {
     return (
@@ -40,8 +66,34 @@ function GraphView() {
         </h1>
       </div>
 
-      {/* DAG Canvas - fills remaining space */}
-      <DagCanvas />
+      {/* Breadcrumb */}
+      <GraphBreadcrumb />
+
+      {/* Content area */}
+      <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
+        {graphNav.level === 1 && <StrategicView />}
+
+        {graphNav.level === 2 && (
+          <>
+            <CommandSidebar />
+            {graphNav.commandOfFinalId ? (
+              <CommandGraph ofFinalId={graphNav.commandOfFinalId} />
+            ) : (
+              <div className="flex flex-1 items-center justify-center">
+                <span style={{ color: 'var(--pp-text-secondary)' }}>
+                  Selectionnez une commande client dans le panneau de gauche
+                </span>
+              </div>
+            )}
+          </>
+        )}
+
+        {graphNav.level === '3a' && graphNav.focusNodeId && (
+          <FocusGraph focusNodeId={graphNav.focusNodeId} />
+        )}
+
+        {graphNav.level === '3b' && <QuestionView />}
+      </div>
     </div>
   );
 }

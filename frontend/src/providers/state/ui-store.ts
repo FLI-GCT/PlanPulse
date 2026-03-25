@@ -2,6 +2,20 @@ import { createStore } from 'zustand/vanilla';
 import { immer } from 'zustand/middleware/immer';
 import { useStore } from 'zustand';
 
+export type StrategicGroupBy = 'client' | 'semaine' | 'article' | 'priorite';
+export type StrategicVariant = 'bubbles' | 'flows';
+
+export interface GraphNav {
+  level: 1 | 2 | '3a' | '3b';
+  commandOfFinalId: string | null;
+  focusNodeId: string | null;
+  questionType: string | null;
+  questionTargetId: string | null;
+  strategicGroupBy: StrategicGroupBy;
+  strategicVariant: StrategicVariant;
+  breadcrumb: Array<{ level: string; label: string }>;
+}
+
 interface UiState {
   selectedNodeId: string | null;
   hoveredNodeId: string | null;
@@ -24,6 +38,7 @@ interface UiState {
   } | null;
   whatIfMode: boolean;
   scenarioId: string | null;
+  graphNav: GraphNav;
 }
 
 interface UiActions {
@@ -36,6 +51,7 @@ interface UiActions {
   startDrag: (ofId: string, requestId: number) => void;
   endDrag: () => void;
   setWhatIfMode: (enabled: boolean, scenarioId?: string | null) => void;
+  setGraphNav: (nav: Partial<GraphNav>) => void;
 }
 
 export const uiStore = createStore<UiState & UiActions>()(
@@ -57,6 +73,16 @@ export const uiStore = createStore<UiState & UiActions>()(
     dragState: null,
     whatIfMode: false,
     scenarioId: null,
+    graphNav: {
+      level: 1,
+      commandOfFinalId: null,
+      focusNodeId: null,
+      questionType: null,
+      questionTargetId: null,
+      strategicGroupBy: 'client' as const,
+      strategicVariant: 'bubbles' as const,
+      breadcrumb: [{ level: '1', label: 'Vue strategique' }],
+    },
 
     selectNode: (nodeId) =>
       set((state) => {
@@ -103,6 +129,11 @@ export const uiStore = createStore<UiState & UiActions>()(
       set((state) => {
         state.whatIfMode = enabled;
         state.scenarioId = scenarioId ?? null;
+      }),
+
+    setGraphNav: (nav) =>
+      set((state) => {
+        Object.assign(state.graphNav, nav);
       }),
   })),
 );
