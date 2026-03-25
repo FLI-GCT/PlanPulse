@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Controls,
@@ -6,12 +6,9 @@ import {
   Background,
   BackgroundVariant,
   ReactFlowProvider,
-  useNodesState,
-  useEdgesState,
+  useReactFlow,
   type Node,
   type Edge,
-  type OnNodesChange,
-  type OnEdgesChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Spinner } from '@fli-dgtf/flow-ui';
@@ -25,13 +22,11 @@ import { OfNode } from '../of-node';
 import { AchatNode } from '../achat-node';
 import { DependencyEdge } from './dependency-edge';
 
-// ── Constants ────────────────────────────────────────────────────
 const OF_WIDTH = 220;
 const OF_HEIGHT = 90;
 const ACHAT_WIDTH = 200;
 const ACHAT_HEIGHT = 80;
 
-// ── Type registries ──────────────────────────────────────────────
 const nodeTypes = {
   ofNode: OfNode,
   achatNode: AchatNode,
@@ -41,8 +36,7 @@ const edgeTypes = {
   dependencyEdge: DependencyEdge,
 };
 
-// ── Node transformation ──────────────────────────────────────────
-function buildFlowNodes(
+function buildNodes(
   graphNodes: GraphNode[],
   graphEdges: GraphEdge[],
   margins: MarginResult[],
@@ -67,26 +61,19 @@ function buildFlowNodes(
   const positions = computeDagreLayout(layoutNodes, layoutEdges, 'LR');
   const posMap = new Map(positions.map((p) => [p.id, { x: p.x, y: p.y }]));
 
-  return graphNodes.map((gNode) => {
-    const margin = marginMap.get(gNode.id);
-    const estCritique = criticalSet.has(gNode.id);
-    const pos = posMap.get(gNode.id) ?? { x: 0, y: 0 };
-
-    return {
-      id: gNode.id,
-      type: gNode.type === 'achat' ? 'achatNode' : 'ofNode',
-      position: pos,
-      data: {
-        ...gNode,
-        margin,
-        estCritique,
-      },
-    };
-  });
+  return graphNodes.map((gNode) => ({
+    id: gNode.id,
+    type: gNode.type === 'achat' ? 'achatNode' : 'ofNode',
+    position: posMap.get(gNode.id) ?? { x: 0, y: 0 },
+    data: {
+      ...gNode,
+      margin: marginMap.get(gNode.id),
+      estCritique: criticalSet.has(gNode.id),
+    },
+  }));
 }
 
-// ── Edge transformation ──────────────────────────────────────────
-function buildFlowEdges(
+function buildEdges(
   graphEdges: GraphEdge[],
   criticalPath: string[],
   selectedNodeId: string | null,
@@ -94,11 +81,9 @@ function buildFlowEdges(
   const criticalSet = new Set(criticalPath);
 
   return graphEdges.map((e) => {
-    const isOnCritical =
-      criticalSet.has(e.sourceId) && criticalSet.has(e.targetId);
-    const isConnectedToSelected =
-      selectedNodeId != null &&
-      (e.sourceId === selectedNodeId || e.targetId === selectedNodeId);
+    const isOnCritical = criticalSet.has(e.sourceId) && criticalSet.has(e.targetId);
+    const isSelected =
+      selectedNodeId != null && (e.sourceId === selectedNodeId || e.targetId === selectedNodeId);
 
     return {
       id: `${e.sourceId}-${e.targetId}`,
@@ -110,52 +95,61 @@ function buildFlowEdges(
         estCritique: isOnCritical,
         quantite: e.quantite,
       },
-      style: isConnectedToSelected
-        ? { stroke: 'var(--pp-blue)', strokeWidth: 2 }
-        : undefined,
+      style: isSelected ? { stroke: 'var(--pp-blue)', strokeWidth: 2 } : undefined,
     };
   });
 }
 
-// ── Inner graph (needs ReactFlowProvider) ────────────────────────
 function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
   const { data, isLoading, error } = useSubgraphQuery(ofFinalId);
   const selectedNodeId = useUiStore((s) => s.selectedNodeId);
   const selectNode = useUiStore((s) => s.selectNode);
   const { goToFocus } = useGraphNavigation();
+  const { fitView } = useReactFlow();
 
-  const graphNodes: GraphNode[] = data?.nodes ?? [];
-  const graphEdges: GraphEdge[] = data?.edges ?? [];
-  const margins: MarginResult[] = data?.margins ?? [];
-  const criticalPath: string[] = data?.criticalPath ?? [];
+  // Stabiliser les references de donnees avec un ref pour eviter les boucles
+  const prevDataRef = useRef<string>('');
 
-  const flowNodes = useMemo(
-    () => buildFlowNodes(graphNodes, graphEdges, margins, criticalPath),
-    [graphNodes, graphEdges, margins, criticalPath],
-  );
+  const stableData = useMemo(() => {
+    const raw = data ?? { nodes: [], edges: [], margins: [], criticalPath: [] };
+    const key = JSON.stringify({ n: raw.nodes?.length, e: raw.edges?.length, id: ofFinalId });
+    if (key !== prevDataRef.current) {
+      prevDataRef.current = key;
+      return {
+        nodes: (raw.nodes ?? []) as GraphNode[],
+        edges: (raw.edges ?? []) as GraphEdge[],
+        margins: (raw.margins ?? []) as MarginResult[],
+        criticalPath: (raw.criticalPath ?? []) as string[],
+      };
+    }
+    return null; // signal pas de changement
+  }, [data, ofFinalId]);
 
-  const flowEdges = useMemo(
-    () => buildFlowEdges(graphEdges, criticalPath, selectedNodeId),
-    [graphEdges, criticalPath, selectedNodeId],
-  );
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
 
-  const [nodes, , onNodesChange] = useNodesState(flowNodes);
-  const [edges, , onEdgesChange] = useEdgesState(flowEdges);
+  // Recalculer les noeuds uniquement quand les donnees changent
+  useEffect(() => {
+    if (!data) return;
+    const raw = data as { nodes?: GraphNode[]; edges?: GraphEdge[]; margins?: MarginResult[]; criticalPath?: string[] };
+    const gn = raw.nodes ?? [];
+    const ge = raw.edges ?? [];
+    const gm = raw.margins ?? [];
+    const cp = raw.criticalPath ?? [];
 
-  // Use computed nodes/edges directly since they reactively update
-  const displayNodes = useMemo(() => {
-    if (flowNodes.length === 0) return nodes;
-    // Merge positions from state with latest data
-    const posMap = new Map(nodes.map((n) => [n.id, n.position]));
-    return flowNodes.map((fn) => ({
-      ...fn,
-      position: posMap.get(fn.id) ?? fn.position,
-    }));
-  }, [flowNodes, nodes]);
+    if (gn.length === 0) return;
 
-  const displayEdges = useMemo(() => {
-    return flowEdges;
-  }, [flowEdges]);
+    setNodes(buildNodes(gn, ge, gm, cp));
+    // Fit apres le render
+    setTimeout(() => fitView({ padding: 0.3 }), 100);
+  }, [data, fitView]);
+
+  // Recalculer les aretes quand la selection change
+  useEffect(() => {
+    if (!data) return;
+    const raw = data as { edges?: GraphEdge[]; criticalPath?: string[] };
+    setEdges(buildEdges(raw.edges ?? [], raw.criticalPath ?? [], selectedNodeId));
+  }, [data, selectedNodeId]);
 
   const handlePaneClick = useCallback(() => {
     selectNode(null);
@@ -174,9 +168,7 @@ function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
       <div className="flex flex-1 items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Spinner />
-          <span style={{ color: 'var(--pp-text-secondary)' }}>
-            Chargement du sous-graphe...
-          </span>
+          <span style={{ color: 'var(--pp-text-secondary)' }}>Chargement du sous-graphe...</span>
         </div>
       </div>
     );
@@ -185,26 +177,21 @@ function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <span style={{ color: 'var(--pp-red)' }}>
-          Erreur lors du chargement du graphe
-        </span>
+        <span style={{ color: 'var(--pp-red)' }}>Erreur lors du chargement du graphe</span>
       </div>
     );
   }
 
-  if (graphNodes.length === 0) {
+  if (nodes.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <span style={{ color: 'var(--pp-text-secondary)' }}>
-          Aucun noeud dans ce sous-graphe
-        </span>
+        <span style={{ color: 'var(--pp-text-secondary)' }}>Aucun noeud dans ce sous-graphe</span>
       </div>
     );
   }
 
   return (
     <div className="relative flex-1" style={{ minHeight: 0 }}>
-      {/* CSS animation for critical path edges */}
       <style>{`
         @keyframes dash-flow {
           to { stroke-dashoffset: -12; }
@@ -212,10 +199,8 @@ function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
       `}</style>
 
       <ReactFlow
-        nodes={displayNodes}
-        edges={displayEdges}
-        onNodesChange={onNodesChange as OnNodesChange<Node>}
-        onEdgesChange={onEdgesChange as OnEdgesChange<Edge>}
+        nodes={nodes}
+        edges={edges}
         onPaneClick={handlePaneClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         nodeTypes={nodeTypes}
@@ -226,14 +211,14 @@ function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{ type: 'dependencyEdge' }}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
       >
         <Controls
           position="bottom-left"
           showInteractive={false}
-          style={{
-            borderColor: 'var(--pp-border)',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-          }}
+          style={{ borderColor: 'var(--pp-border)', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}
         />
         <MiniMap
           position="bottom-right"
@@ -243,23 +228,14 @@ function CommandGraphInner({ ofFinalId }: { ofFinalId: string }) {
             return 'var(--pp-blue)';
           }}
           maskColor="rgba(248, 247, 244, 0.7)"
-          style={{
-            borderColor: 'var(--pp-border)',
-            backgroundColor: 'var(--pp-surface)',
-          }}
+          style={{ borderColor: 'var(--pp-border)', backgroundColor: 'var(--pp-surface)' }}
         />
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1}
-          color="var(--pp-border)"
-        />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--pp-border)" />
       </ReactFlow>
     </div>
   );
 }
 
-// ── Export wrapped with provider ──────────────────────────────────
 export function CommandGraph({ ofFinalId }: { ofFinalId: string }) {
   return (
     <ReactFlowProvider>
