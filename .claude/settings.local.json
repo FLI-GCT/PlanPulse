@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Bash(*)",
+      "Bash(head -5 \"d:/Github/Cockpit_OEC/Extraction_Guillaume_2026313 \\(1\\).csv\")",
+      "Bash(head -1 \"d:/Github/Cockpit_OEC/Extraction_Guillaume_2026313 \\(1\\).csv\")",
+      "Bash(wc -l \"d:/Github/Cockpit_OEC/Extraction_Guillaume_2026313 \\(1\\).csv\")",
+      "Bash(pip install:*)",
+      "Bash(python3 -m pip install openpyxl)",
+      "Bash(python3:*)",
+      "Bash(start \"\" \"d:/Github/Cockpit_OEC/cockpit_or.html\")",
+      "Read(//d/Github/FLI_DGTF_Flow_Line_AI/database/prisma/**)",
+      "Read(//d/Github/FLI_DGTF_Flow_Line_AI/**)",
+      "Read(//d/Github/FlowAurum/database/prisma/generated/prisma/**)",
+      "Read(//d/Github/FlowAurum/frontend/src/features/synoptic/**)",
+      "Read(//d/Github/FlowAurum/frontend/**)",
+      "Read(//d/Github/FlowAurum/backend/src/gold/**)",
+      "Read(//d/Github/FlowAurum/**)",
+      "mcp__claude_ai_FLI_DataGouv__datagouv_api_call"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "enabledMcpjsonServers": [
+    "flowui"
+  ],
+  "mode": "bypassPermissions",
+  "enableAllProjectMcpServers": true
+}

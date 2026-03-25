@@ -1,0 +1,16 @@
+@import '@fli-dgtf/flow-ui/style.css';
+@source '../node_modules/@fli-dgtf/flow-ui/dist/**/*.js';
+
+/* PlanPulse theme overrides */
+:root {
+  --pp-navy: #1B2A4A;
+  --pp-blue: #2E75B6;
+  --pp-green: #0F6E56;
+  --pp-amber: #BA7517;
+  --pp-coral: #D85A30;
+  --pp-red: #E24B4A;
+  --pp-bg: #F8F7F4;
+  --pp-surface: #FFFFFF;
+  --pp-text-secondary: #5F5E5A;
+  --pp-border: #E5E3DC;
+}

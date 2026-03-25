@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flowui": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const {spawn}=require('child_process');const w=process.platform==='win32';const c=spawn(w?'cmd':'npx',w?['/c','npx','-p','@fli-dgtf/flow-ui','flowui-mcp']:['-p','@fli-dgtf/flow-ui','flowui-mcp'],{stdio:'inherit'});c.on('exit',code=>process.exit(code??1))"
+      ]
+    }
+  }
+}

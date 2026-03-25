@@ -1,0 +1,256 @@
+generator for_api {
+  provider = "prisma-client-js"
+  output   = "../../api/prisma/generated"
+}
+
+generator for_database {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum ArticleType {
+  PRODUIT_FINI
+  SEMI_FINI
+  ACHETE_COMMUN
+  ACHETE_SPECIFIQUE
+}
+
+enum StatutOf {
+  PLANIFIE
+  EN_COURS
+  TERMINE
+  EN_RETARD
+  ANNULE
+}
+
+enum StatutAchat {
+  COMMANDE
+  EN_TRANSIT
+  RECEPTIONNE
+  EN_RETARD
+  ANNULE
+}
+
+enum TypeLien {
+  FORT
+  PARTAGE
+  NOMENCLATURE
+}
+
+enum Severite {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// ─── Articles (referentiel) ──────────────────────────────
+
+model Article {
+  id            String      @id // ex: ART-PF-001
+  label         String
+  type          ArticleType
+  delaiJours    Float       @default(1) // delai fabrication ou approvisionnement
+  coutUnitaire  Float?
+  unite         String      @default("piece")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  nomenclaturesParent  Nomenclature[]       @relation("NomParent")
+  nomenclaturesEnfant  Nomenclature[]       @relation("NomEnfant")
+  ordresFabrication    OrdreFabrication[]
+  achats               Achat[]
+
+  @@map("article")
+}
+
+// ─── Nomenclatures (BOM) ─────────────────────────────────
+
+model Nomenclature {
+  id                  Int      @id @default(autoincrement())
+  parentArticleId     String
+  composantArticleId  String
+  quantite            Float    @default(1)
+  optionnel           Boolean  @default(false)
+  groupeOption        String?  // ex: "plateau", "guidon", "batterie"
+  version             String   @default("v1")
+  createdAt           DateTime @default(now())
+
+  parent    Article @relation("NomParent", fields: [parentArticleId], references: [id])
+  composant Article @relation("NomEnfant", fields: [composantArticleId], references: [id])
+
+  @@unique([parentArticleId, composantArticleId, version])
+  @@map("nomenclature")
+}
+
+// ─── Ordres de fabrication ───────────────────────────────
+
+model OrdreFabrication {
+  id              String    @id // ex: OF-1001
+  articleId       String
+  quantite        Int
+  dateDebutPrevue DateTime
+  dateFinPrevue   DateTime
+  statut          StatutOf  @default(PLANIFIE)
+  priorite        Int       @default(2)
+  parentOfId      String?
+  clientNom       String?
+  clientRef       String?
+  config          Json?     // configuration client (options choisies)
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  article         Article            @relation(fields: [articleId], references: [id])
+  parentOf        OrdreFabrication?  @relation("OfHierarchie", fields: [parentOfId], references: [id])
+  sousOfs         OrdreFabrication[] @relation("OfHierarchie")
+
+  cacheMarge      CacheMarge?
+  cacheAllocations CacheAllocation[]
+  achatsSpecifiques Achat[]          @relation("AchatSpecifique")
+
+  @@index([statut])
+  @@index([dateDebutPrevue, dateFinPrevue])
+  @@index([parentOfId])
+  @@map("ordre_fabrication")
+}
+
+// ─── Achats ──────────────────────────────────────────────
+
+model Achat {
+  id                   String      @id // ex: ACH-G-001 ou ACH-S-501
+  articleId            String
+  quantite             Int
+  quantiteRecue        Int         @default(0)
+  dateCommande         DateTime
+  dateLivraisonPrevue  DateTime
+  dateLivraisonReelle  DateTime?
+  fournisseur          String
+  statut               StatutAchat @default(COMMANDE)
+  typeLien             String      // 'partage' | 'specifique'
+  ofSpecifiqueId       String?
+  prixUnitaire         Float?
+  notes                String?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  article       Article           @relation(fields: [articleId], references: [id])
+  ofSpecifique  OrdreFabrication? @relation("AchatSpecifique", fields: [ofSpecifiqueId], references: [id])
+
+  cacheAllocations CacheAllocation[]
+
+  @@index([statut])
+  @@index([articleId])
+  @@index([ofSpecifiqueId])
+  @@map("achat")
+}
+
+// ─── Dependances (aretes du DAG) ─────────────────────────
+// Table polymorphe : source/target peuvent etre OF ou Achat
+// PAS de @relation Prisma - resolution applicative dans GraphService
+
+model Dependance {
+  id            Int      @id @default(autoincrement())
+  sourceType    String   // 'of' | 'achat'
+  sourceId      String
+  targetType    String   // 'of' | 'achat'
+  targetId      String
+  typeLien      TypeLien
+  quantite      Float?
+  delaiMinimum  Float    @default(0) // jours
+  createdAt     DateTime @default(now())
+
+  @@unique([sourceId, targetId])
+  @@index([sourceId])
+  @@index([targetId])
+  @@map("dependance")
+}
+
+// ─── Caches pre-calcules ─────────────────────────────────
+
+model CacheMarge {
+  id           Int      @id @default(autoincrement())
+  ofId         String   @unique
+  earlyStart   DateTime?
+  earlyFinish  DateTime?
+  lateStart    DateTime?
+  lateFinish   DateTime?
+  floatTotal   Int      @default(0) // jours
+  floatLibre   Int      @default(0)
+  estCritique  Boolean  @default(false)
+  riskScore    Int      @default(0) // 0-100
+  updatedAt    DateTime @default(now())
+
+  of OrdreFabrication @relation(fields: [ofId], references: [id])
+
+  @@map("cache_marge")
+}
+
+model CacheAllocation {
+  id              Int      @id @default(autoincrement())
+  achatId         String
+  ofId            String
+  quantiteAllouee Int
+  rangPriorite    Int
+  couvert         Boolean
+  updatedAt       DateTime @default(now())
+
+  achat Achat            @relation(fields: [achatId], references: [id])
+  of    OrdreFabrication @relation(fields: [ofId], references: [id])
+
+  @@unique([achatId, ofId])
+  @@map("cache_allocation")
+}
+
+// ─── Audit ───────────────────────────────────────────────
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  entityType String   // 'of' | 'achat' | 'dependance'
+  entityId   String
+  action     String   // 'create' | 'update' | 'delete' | 'propagation' | 'allocation'
+  payload    Json?
+  userId     String   @default("system")
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+// ─── Scenarios what-if ───────────────────────────────────
+
+model Scenario {
+  id          String   @id @default(uuid())
+  nom         String
+  description String?
+  snapshot    Json     // etat complet du graphe
+  diff        Json?    // diff vs plan de reference
+  statut      String   @default("brouillon") // brouillon | valide | abandonne
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("scenario")
+}
+
+// ─── Alertes ─────────────────────────────────────────────
+
+model Alerte {
+  id          Int      @id @default(autoincrement())
+  type        String   // 'contrainte_violee' | 'achat_retard' | 'penurie' | 'obsolete' | 'orphelin' | 'float_negatif'
+  severite    Severite
+  message     String
+  noeuds      Json     // liste des IDs concernes
+  dismissed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("alerte")
+}
