@@ -10,6 +10,7 @@ export const graphNodeSchema = z.object({
   statut: z.string(),
   priorite: z.number().nullable(),
   quantite: z.number(),
+  fournisseur: z.string().nullable().optional(),
   version: z.number().default(0), // verrou optimiste
 });
 

@@ -14,6 +14,8 @@ interface DetectedAlert {
 @Injectable()
 export class AlertDetectionService {
   private readonly logger = new Logger(AlertDetectionService.name);
+  private isRunning = false;
+  private lastRunAt = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -22,24 +24,33 @@ export class AlertDetectionService {
 
   @Cron(CronExpression.EVERY_30_SECONDS)
   async detectAll(): Promise<void> {
-    this.logger.debug('Lancement de la detection des alertes...');
+    if (this.isRunning) return;
+    if (Date.now() - this.lastRunAt < 10_000) return; // debounce 10s
+    this.isRunning = true;
+    this.lastRunAt = Date.now();
 
-    const detected: DetectedAlert[] = [];
+    try {
+      this.logger.debug('Lancement de la detection des alertes...');
 
-    const [achatRetard, penuries, contraintes, orphelins, obsoletes] =
-      await Promise.all([
-        this.detectAchatRetard(),
-        this.detectPenurie(),
-        this.detectContrainteViolee(),
-        this.detectOfOrphelin(),
-        this.detectAchatObsolete(),
-      ]);
+      const detected: DetectedAlert[] = [];
 
-    detected.push(...achatRetard, ...penuries, ...contraintes, ...orphelins, ...obsoletes);
+      const [achatRetard, penuries, contraintes, orphelins, obsoletes] =
+        await Promise.all([
+          this.detectAchatRetard(),
+          this.detectPenurie(),
+          this.detectContrainteViolee(),
+          this.detectOfOrphelin(),
+          this.detectAchatObsolete(),
+        ]);
 
-    await this.reconcile(detected);
+      detected.push(...achatRetard, ...penuries, ...contraintes, ...orphelins, ...obsoletes);
 
-    this.logger.debug(`Detection terminee: ${detected.length} alerte(s) detectee(s)`);
+      await this.reconcile(detected);
+
+      this.logger.debug(`Detection terminee: ${detected.length} alerte(s) detectee(s)`);
+    } finally {
+      this.isRunning = false;
+    }
   }
 
   // ─── Detection: Achats en retard ────────────────────────

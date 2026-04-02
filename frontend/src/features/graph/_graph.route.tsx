@@ -12,6 +12,7 @@ import { StrategicToolbar } from './components/strategic/strategic-toolbar';
 import { BubbleMap } from './components/strategic/bubble-map';
 import { FlowView } from './components/strategic/flow-view';
 import { useUiStore } from '@/providers/state/ui-store';
+import { ErrorBoundary } from '@/components/shared/error-boundary';
 
 export const Route = createFileRoute('/_layout/graph')({
   component: GraphView,
@@ -51,49 +52,51 @@ function GraphView() {
   }
 
   return (
-    <div className="flex flex-1 flex-col" style={{ minHeight: 0 }}>
-      {/* Header */}
-      <div className="flex shrink-0 items-center gap-3 px-6 pt-6 pb-2">
-        <NetworkIcon
-          className="h-6 w-6"
-          style={{ color: 'var(--pp-navy)' }}
-        />
-        <h1
-          className="text-2xl font-bold"
-          style={{ color: 'var(--pp-navy)' }}
-        >
-          Graphe de dependances
-        </h1>
+    <ErrorBoundary>
+      <div className="flex flex-1 flex-col" style={{ minHeight: 0 }}>
+        {/* Header */}
+        <div className="flex shrink-0 items-center gap-3 px-6 pt-6 pb-2">
+          <NetworkIcon
+            className="h-6 w-6"
+            style={{ color: 'var(--pp-navy)' }}
+          />
+          <h1
+            className="text-2xl font-bold"
+            style={{ color: 'var(--pp-navy)' }}
+          >
+            Graphe de dependances
+          </h1>
+        </div>
+
+        {/* Breadcrumb */}
+        <GraphBreadcrumb />
+
+        {/* Content area */}
+        <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
+          {graphNav.level === 1 && <StrategicView />}
+
+          {graphNav.level === 2 && (
+            <>
+              <CommandSidebar />
+              {graphNav.commandOfFinalId ? (
+                <CommandGraph ofFinalId={graphNav.commandOfFinalId} />
+              ) : (
+                <div className="flex flex-1 items-center justify-center">
+                  <span style={{ color: 'var(--pp-text-secondary)' }}>
+                    Selectionnez une commande client dans le panneau de gauche
+                  </span>
+                </div>
+              )}
+            </>
+          )}
+
+          {graphNav.level === '3a' && graphNav.focusNodeId && (
+            <FocusGraph focusNodeId={graphNav.focusNodeId} />
+          )}
+
+          {graphNav.level === '3b' && <QuestionView />}
+        </div>
       </div>
-
-      {/* Breadcrumb */}
-      <GraphBreadcrumb />
-
-      {/* Content area */}
-      <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
-        {graphNav.level === 1 && <StrategicView />}
-
-        {graphNav.level === 2 && (
-          <>
-            <CommandSidebar />
-            {graphNav.commandOfFinalId ? (
-              <CommandGraph ofFinalId={graphNav.commandOfFinalId} />
-            ) : (
-              <div className="flex flex-1 items-center justify-center">
-                <span style={{ color: 'var(--pp-text-secondary)' }}>
-                  Selectionnez une commande client dans le panneau de gauche
-                </span>
-              </div>
-            )}
-          </>
-        )}
-
-        {graphNav.level === '3a' && graphNav.focusNodeId && (
-          <FocusGraph focusNodeId={graphNav.focusNodeId} />
-        )}
-
-        {graphNav.level === '3b' && <QuestionView />}
-      </div>
-    </div>
+    </ErrorBoundary>
   );
 }

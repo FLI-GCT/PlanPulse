@@ -1,7 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { parseISO, getISOWeek, differenceInCalendarDays } from 'date-fns';
 import { PrismaService } from 'src/_shared/adapters/prisma/prisma.service';
 import { GraphNode, GraphEdge } from 'src/graph/_entities';
+import { CriticalPathService } from 'src/graph/services/critical-path.service';
+import { AllocationService } from 'src/graph/services/allocation.service';
 
 /**
  * Service singleton maintenant le DAG de production en memoire.
@@ -18,10 +20,30 @@ export class GraphService implements OnModuleInit {
   /** Aretes entrantes : targetId -> edges[] */
   readonly inEdges = new Map<string, GraphEdge[]>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => CriticalPathService))
+    private readonly criticalPathService: CriticalPathService,
+    @Inject(forwardRef(() => AllocationService))
+    private readonly allocationService: AllocationService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     await this.loadFromDb();
+
+    // Recalculate CPM and allocations at startup
+    try {
+      await this.criticalPathService.recalculate();
+      this.logger.log('Chemin critique recalcule au demarrage');
+    } catch (e) {
+      this.logger.error('Erreur recalcul CPM au demarrage', e);
+    }
+    try {
+      await this.allocationService.allocateAll();
+      this.logger.log('Allocations recalculees au demarrage');
+    } catch (e) {
+      this.logger.error('Erreur recalcul allocations au demarrage', e);
+    }
   }
 
   // ─── Chargement initial ──────────────────────────────────
@@ -70,6 +92,7 @@ export class GraphService implements OnModuleInit {
         statut: achat.statut,
         priorite: null,
         quantite: achat.quantite,
+        fournisseur: achat.fournisseur,
         version: 0,
       };
       this.nodes.set(node.id, node);

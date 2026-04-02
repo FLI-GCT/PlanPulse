@@ -1,14 +1,11 @@
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
-  useState,
 } from 'react';
 import { scaleTime } from 'd3-scale';
 import { timeDay, timeWeek } from 'd3-time';
 import {
-  parseISO,
   format,
   differenceInCalendarDays,
   getISOWeek,
@@ -17,146 +14,21 @@ import {
 import { fr } from 'date-fns/locale';
 
 import { useGraphStore } from '@/providers/state/graph-store';
-import type { GraphNode, GraphEdge, MarginResult, PropagationResult } from '@/providers/state/graph-store';
+import type { MarginResult } from '@/providers/state/graph-store';
 import { useUiStore } from '@/providers/state/ui-store';
-import { useSocket } from '@/providers/socket/socket-context';
-import { useSocketEmit } from '@/providers/socket/use-socket-emit';
-import { useSocketEvent } from '@/providers/socket/use-socket-event';
 
+import {
+  SIDEBAR_WIDTH,
+  ROW_HEIGHT,
+  HEADER_HEIGHT,
+  DAY_WIDTH,
+  INDENT_PX,
+  buildRows,
+} from '@/features/gantt/gantt-layout';
+import { useGanttDrag } from '@/features/gantt/hooks/use-gantt-drag';
+import { GanttDependencies } from './gantt-dependencies';
 import { GanttBar } from './gantt-bar';
 import { MoveConfirmDialog } from './move-confirm-dialog';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const SIDEBAR_WIDTH = 200;
-const ROW_HEIGHT = 36;
-const HEADER_HEIGHT = 52;
-const DAY_WIDTH = 36;
-const INDENT_PX = 16;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-interface RowData {
-  node: GraphNode;
-  depth: number;
-}
-
-interface DragSession {
-  nodeId: string;
-  startClientX: number;
-  startDateDebut: Date;
-  currentDeltaPx: number;
-  lastEmitTime: number;
-}
-
-interface PendingMove {
-  nodeId: string;
-  deltaJours: number;
-  impactedNodes: PropagationResult[];
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Build a hierarchical row list: parents first, then their children indented. */
-function buildRows(
-  nodes: GraphNode[],
-  edges: GraphEdge[],
-  statutFilter: string[],
-  criticalFilter: boolean,
-  criticalPath: string[],
-): RowData[] {
-  // Filter to OFs only
-  let ofNodes = nodes.filter((n) => n.type === 'of');
-
-  // Apply statut filter (ignore __critical__ marker)
-  const realStatuts = statutFilter.filter((s) => s !== '__critical__');
-  if (realStatuts.length > 0) {
-    ofNodes = ofNodes.filter((n) => realStatuts.includes(n.statut));
-  }
-
-  // Apply critical path filter
-  const critSet = new Set(criticalPath);
-  if (criticalFilter) {
-    ofNodes = ofNodes.filter((n) => critSet.has(n.id));
-  }
-
-  // Build parent-child map from NOMENCLATURE edges
-  // An edge sourceId -> targetId where both are 'of' and typeLien='NOMENCLATURE'
-  // means sourceId is a parent of targetId (source depends on target being done first)
-  // Actually in a BOM, the assembly (parent) has children (sub-OFs) that feed into it.
-  // Let's find children: if an edge has sourceType='of', targetType='of', typeLien='NOMENCLATURE',
-  // then targetId is a child that feeds into sourceId (the parent).
-  const childrenOf = new Map<string, string[]>();
-  const hasParent = new Set<string>();
-
-  const ofIdSet = new Set(ofNodes.map((n) => n.id));
-
-  for (const edge of edges) {
-    if (
-      edge.sourceType === 'of' &&
-      edge.targetType === 'of' &&
-      edge.typeLien === 'NOMENCLATURE' &&
-      ofIdSet.has(edge.sourceId) &&
-      ofIdSet.has(edge.targetId)
-    ) {
-      // sourceId is the parent (assembly), targetId is the child
-      if (!childrenOf.has(edge.sourceId)) {
-        childrenOf.set(edge.sourceId, []);
-      }
-      childrenOf.get(edge.sourceId)!.push(edge.targetId);
-      hasParent.add(edge.targetId);
-    }
-  }
-
-  const nodeMap = new Map(ofNodes.map((n) => [n.id, n]));
-  const rows: RowData[] = [];
-  const visited = new Set<string>();
-
-  // Recursive function to add a node and its children
-  function addNodeWithChildren(nodeId: string, depth: number) {
-    if (visited.has(nodeId)) return;
-    visited.add(nodeId);
-    const node = nodeMap.get(nodeId);
-    if (!node) return;
-    rows.push({ node, depth });
-
-    const children = childrenOf.get(nodeId) ?? [];
-    // Sort children by dateDebut
-    children.sort((a, b) => {
-      const na = nodeMap.get(a);
-      const nb = nodeMap.get(b);
-      if (!na || !nb) return 0;
-      return na.dateDebut.localeCompare(nb.dateDebut);
-    });
-    for (const childId of children) {
-      addNodeWithChildren(childId, depth + 1);
-    }
-  }
-
-  // Roots: nodes that have no parent
-  const roots = ofNodes
-    .filter((n) => !hasParent.has(n.id))
-    .sort((a, b) => a.dateDebut.localeCompare(b.dateDebut));
-
-  for (const root of roots) {
-    addNodeWithChildren(root.id, 0);
-  }
-
-  // Add any remaining nodes that weren't reached (orphans)
-  for (const node of ofNodes) {
-    if (!visited.has(node.id)) {
-      rows.push({ node, depth: 0 });
-    }
-  }
-
-  return rows;
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -167,32 +39,15 @@ export function GanttChart() {
   const edges = useGraphStore((s) => s.edges);
   const margins = useGraphStore((s) => s.margins);
   const criticalPath = useGraphStore((s) => s.criticalPath);
-  const propagationPreview = useGraphStore((s) => s.propagationPreview);
-  const applyPreview = useGraphStore((s) => s.applyPreview);
-  const clearPreview = useGraphStore((s) => s.clearPreview);
 
   const selectedNodeId = useUiStore((s) => s.selectedNodeId);
   const selectNode = useUiStore((s) => s.selectNode);
   const filters = useUiStore((s) => s.filters);
   const ganttZoom = useUiStore((s) => s.ganttZoom);
-  const startDragStore = useUiStore((s) => s.startDrag);
-  const endDragStore = useUiStore((s) => s.endDrag);
 
-  const { isConnected } = useSocket();
-  const emit = useSocketEmit();
-
-  // Refs for drag
-  const dragRef = useRef<DragSession | null>(null);
-  const requestIdRef = useRef(0);
-  const lastEmittedRequestIdRef = useRef(0);
-  const svgRef = useRef<SVGSVGElement>(null);
+  // Refs for scroll sync
   const sidebarRef = useRef<HTMLDivElement>(null);
   const chartScrollRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number>(0);
-
-  // Drag visual state (only the delta in pixels, for re-render)
-  const [dragDelta, setDragDelta] = useState<{ nodeId: string; deltaPx: number } | null>(null);
-  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
 
   // ---- Derived data ----
 
@@ -213,16 +68,6 @@ export function GanttChart() {
     [nodes, edges, filters.statuts, isCriticalFilterActive, criticalPath],
   );
 
-  // Preview lookup
-  const previewMap = useMemo(() => {
-    const m = new Map<string, PropagationResult>();
-    if (!propagationPreview) return m;
-    for (const p of propagationPreview) {
-      m.set(p.nodeId, p);
-    }
-    return m;
-  }, [propagationPreview]);
-
   // ---- Time scale ----
 
   const { xScale, startDate, endDate, totalDays } = useMemo(() => {
@@ -240,6 +85,28 @@ export function GanttChart() {
 
   const chartWidth = totalDays * DAY_WIDTH;
   const chartHeight = rows.length * ROW_HEIGHT;
+
+  // ---- Drag hook ----
+
+  const {
+    dragDelta,
+    pendingMove,
+    handleDragStart,
+    handleConfirmMove,
+    handleCancelMove,
+    previewNodes,
+    isConnected,
+  } = useGanttDrag(xScale);
+
+  // Preview lookup
+  const previewMap = useMemo(() => {
+    const m = new Map<string, import('@/providers/state/graph-store').PropagationResult>();
+    if (!previewNodes) return m;
+    for (const p of previewNodes) {
+      m.set(p.nodeId, p);
+    }
+    return m;
+  }, [previewNodes]);
 
   // ---- Week / day ticks ----
 
@@ -271,81 +138,7 @@ export function GanttChart() {
     return xScale(today);
   }, [xScale, startDate, endDate]);
 
-  // ---- Dependency lines for selected node ----
-
-  const dependencyLines = useMemo(() => {
-    if (!selectedNodeId) return [];
-
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-    const rowIndexMap = new Map(rows.map((r, i) => [r.node.id, i]));
-    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
-
-    for (const edge of edges) {
-      const isRelevant =
-        (edge.sourceId === selectedNodeId || edge.targetId === selectedNodeId) &&
-        edge.sourceType === 'of' &&
-        edge.targetType === 'of';
-
-      if (!isRelevant) continue;
-
-      const sourceNode = nodeMap.get(edge.sourceId);
-      const targetNode = nodeMap.get(edge.targetId);
-      const sourceRow = rowIndexMap.get(edge.sourceId);
-      const targetRow = rowIndexMap.get(edge.targetId);
-
-      if (!sourceNode || !targetNode || sourceRow === undefined || targetRow === undefined) continue;
-
-      // Line from end of target bar to start of source bar
-      // (target feeds into source in NOMENCLATURE edges)
-      const x1 = xScale(parseISO(targetNode.dateFin));
-      const y1 = targetRow * ROW_HEIGHT + ROW_HEIGHT / 2;
-      const x2 = xScale(parseISO(sourceNode.dateDebut));
-      const y2 = sourceRow * ROW_HEIGHT + ROW_HEIGHT / 2;
-
-      lines.push({ x1, y1, x2, y2 });
-    }
-
-    return lines;
-  }, [selectedNodeId, nodes, edges, rows, xScale]);
-
-  // ---- Socket event: preview result ----
-
-  const handlePreviewResult = useCallback(
-    (data: { requestId: number; impactedNodes: PropagationResult[] }) => {
-      if (data.requestId >= lastEmittedRequestIdRef.current) {
-        applyPreview(data.impactedNodes);
-      }
-    },
-    [applyPreview],
-  );
-
-  useSocketEvent('of:move-preview-result', handlePreviewResult);
-
-  // ---- Drag handlers ----
-
-  const handleDragStart = useCallback(
-    (nodeId: string, startClientX: number) => {
-      if (!isConnected) return;
-
-      const node = nodes.find((n) => n.id === nodeId);
-      if (!node) return;
-
-      requestIdRef.current += 1;
-      const reqId = requestIdRef.current;
-
-      dragRef.current = {
-        nodeId,
-        startClientX,
-        startDateDebut: parseISO(node.dateDebut),
-        currentDeltaPx: 0,
-        lastEmitTime: 0,
-      };
-
-      startDragStore(nodeId, reqId);
-      setDragDelta({ nodeId, deltaPx: 0 });
-    },
-    [isConnected, nodes, startDragStore],
-  );
+  // ---- Handlers ----
 
   const handleBarClick = useCallback(
     (nodeId: string) => {
@@ -353,96 +146,6 @@ export function GanttChart() {
     },
     [selectNode],
   );
-
-  // Global mouse move & up for drag
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-
-      const deltaPx = e.clientX - drag.startClientX;
-      drag.currentDeltaPx = deltaPx;
-
-      // Update visual via rAF
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => {
-        setDragDelta({ nodeId: drag.nodeId, deltaPx });
-      });
-
-      // Throttle emission to 100ms
-      const now = Date.now();
-      if (now - drag.lastEmitTime < 100) return;
-      drag.lastEmitTime = now;
-
-      // Convert pixel delta to date
-      const newDate = xScale.invert(xScale(drag.startDateDebut) + deltaPx);
-      requestIdRef.current += 1;
-      const reqId = requestIdRef.current;
-      lastEmittedRequestIdRef.current = reqId;
-
-      emit('of:move-preview', {
-        requestId: reqId,
-        ofId: drag.nodeId,
-        newDateDebut: newDate.toISOString(),
-      });
-    };
-
-    const handleMouseUp = () => {
-      const drag = dragRef.current;
-      if (!drag) return;
-
-      // Calculate final delta in days
-      const newDate = xScale.invert(xScale(drag.startDateDebut) + drag.currentDeltaPx);
-      const deltaDays = differenceInCalendarDays(newDate, drag.startDateDebut);
-
-      dragRef.current = null;
-      endDragStore();
-
-      if (deltaDays === 0) {
-        // No real move, clear preview
-        clearPreview();
-        setDragDelta(null);
-        return;
-      }
-
-      // Show confirmation dialog
-      setPendingMove({
-        nodeId: drag.nodeId,
-        deltaJours: deltaDays,
-        impactedNodes: propagationPreview ?? [],
-      });
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, [xScale, emit, endDragStore, clearPreview, propagationPreview]);
-
-  // ---- Confirm / Cancel move ----
-
-  const handleConfirmMove = useCallback(() => {
-    if (!pendingMove) return;
-    emit('of:move-commit', {
-      ofId: pendingMove.nodeId,
-      deltaJours: pendingMove.deltaJours,
-    });
-    clearPreview();
-    setDragDelta(null);
-    setPendingMove(null);
-  }, [pendingMove, emit, clearPreview]);
-
-  const handleCancelMove = useCallback(() => {
-    clearPreview();
-    setDragDelta(null);
-    setPendingMove(null);
-  }, [clearPreview]);
-
-  // ---- Sync scroll between sidebar and chart ----
 
   const handleChartScroll = useCallback(() => {
     const chartEl = chartScrollRef.current;
@@ -515,7 +218,6 @@ export function GanttChart() {
           onScroll={handleChartScroll}
         >
           <svg
-            ref={svgRef}
             width={chartWidth}
             height={HEADER_HEIGHT + chartHeight}
             style={{ display: 'block' }}
@@ -640,27 +342,19 @@ export function GanttChart() {
                 ))}
 
               {/* ---- Dependency lines ---- */}
-              {dependencyLines.map((line, i) => {
-                const midX = (line.x1 + line.x2) / 2;
-                return (
-                  <path
-                    key={`dep-${i}`}
-                    d={`M ${line.x1} ${line.y1} C ${midX} ${line.y1}, ${midX} ${line.y2}, ${line.x2} ${line.y2}`}
-                    fill="none"
-                    stroke="var(--pp-text-secondary)"
-                    strokeWidth={1.5}
-                    strokeDasharray="4 3"
-                    opacity={0.5}
-                  />
-                );
-              })}
+              <GanttDependencies
+                rows={rows}
+                nodes={nodes}
+                edges={edges}
+                xScale={xScale}
+                selectedNodeId={selectedNodeId}
+              />
 
               {/* ---- OF bars ---- */}
               {rows.map((row, i) => {
                 const margin = marginMap.get(row.node.id);
                 const isCritical = criticalSet.has(row.node.id);
                 const isSelected = row.node.id === selectedNodeId;
-                const preview = previewMap.get(row.node.id);
 
                 // Dim non-critical bars when critical filter is active
                 const dimmed = isCriticalFilterActive && !isCritical;
@@ -697,8 +391,8 @@ export function GanttChart() {
               })}
 
               {/* ---- Preview bars (impacted nodes during drag) ---- */}
-              {propagationPreview &&
-                propagationPreview
+              {previewNodes &&
+                previewNodes
                   .filter((p) => p.nodeId !== dragDelta?.nodeId)
                   .map((p) => {
                     const rowIdx = rows.findIndex((r) => r.node.id === p.nodeId);

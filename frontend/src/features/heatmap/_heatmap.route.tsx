@@ -12,6 +12,7 @@ import {
 } from '@fli-dgtf/flow-ui';
 import { ThermometerIcon } from 'lucide-react';
 import { useGraphInitialLoad } from '@/providers/state/use-graph-initial-load';
+import { ErrorBoundary } from '@/components/shared/error-boundary';
 import { useGraphStore } from '@/providers/state/graph-store';
 import {
   HeatmapGrid,
@@ -26,6 +27,7 @@ export const Route = createFileRoute('/_layout/heatmap')({
 function HeatmapView() {
   const { isLoading, error } = useGraphInitialLoad();
   const nodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
   const margins = useGraphStore((s) => s.margins);
 
   const [timeBucket, setTimeBucket] = useState<TimeBucket>('week');
@@ -63,6 +65,7 @@ function HeatmapView() {
   }
 
   return (
+    <ErrorBoundary>
     <div className="flex flex-col gap-4 p-6">
       {/* ---- Header ---- */}
       <div className="flex items-center gap-3">
@@ -104,9 +107,10 @@ function HeatmapView() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="client">Par article</SelectItem>
+              <SelectItem value="client">Par client</SelectItem>
               <SelectItem value="priorite">Par priorite</SelectItem>
               <SelectItem value="statut">Par statut</SelectItem>
+              <SelectItem value="fournisseur">Par fournisseur</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -141,6 +145,7 @@ function HeatmapView() {
         <CardContent className="relative p-4">
           <HeatmapGrid
             nodes={nodes}
+            edges={edges}
             margins={margins}
             timeBucket={timeBucket}
             groupBy={groupBy}
@@ -148,5 +153,6 @@ function HeatmapView() {
         </CardContent>
       </Card>
     </div>
+    </ErrorBoundary>
   );
 }

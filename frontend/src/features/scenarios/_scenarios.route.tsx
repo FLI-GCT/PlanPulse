@@ -14,6 +14,7 @@ import {
   toast,
 } from '@fli-dgtf/flow-ui';
 import { GitBranchIcon, PlusIcon, FlaskConicalIcon } from 'lucide-react';
+import { ErrorBoundary } from '@/components/shared/error-boundary';
 
 export const Route = createFileRoute('/_layout/scenarios')({
   component: ScenariosView,
@@ -21,6 +22,7 @@ export const Route = createFileRoute('/_layout/scenarios')({
 
 function ScenariosView() {
   return (
+    <ErrorBoundary>
     <div className="flex flex-col gap-6 p-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -79,5 +81,6 @@ function ScenariosView() {
         </CardContent>
       </Card>
     </div>
+    </ErrorBoundary>
   );
 }

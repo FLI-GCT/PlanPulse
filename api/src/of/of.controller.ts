@@ -39,6 +39,18 @@ export class OfController {
       orderBy: { dateDebutPrevue: 'asc' },
     });
 
+    // Charger toutes les alertes actives une seule fois (evite N+1)
+    const allAlerts = await this.prisma.alerte.findMany({ where: { dismissed: false } });
+    const alertCountByOf = new Map<string, number>();
+    for (const alert of allAlerts) {
+      const noeuds = alert.noeuds as string[];
+      if (Array.isArray(noeuds)) {
+        for (const noeudId of noeuds) {
+          alertCountByOf.set(noeudId, (alertCountByOf.get(noeudId) ?? 0) + 1);
+        }
+      }
+    }
+
     // Compter les achats par OF racine via les aretes du graphe en memoire
     const result: Array<{
       clientNom: string;
@@ -80,17 +92,8 @@ export class OfController {
         }
       }
 
-      // Compter les alertes pour cet OF
-      const alertes = await this.prisma.alerte.findMany({
-        where: { dismissed: false },
-      });
-      let alertCount = 0;
-      for (const a of alertes) {
-        const noeuds = a.noeuds as string[];
-        if (Array.isArray(noeuds) && noeuds.includes(of_.id)) {
-          alertCount++;
-        }
-      }
+      // Lookup O(1) des alertes pour cet OF
+      const alertCount = alertCountByOf.get(of_.id) ?? 0;
 
       result.push({
         clientNom: of_.clientNom ?? of_.article?.label ?? of_.id,

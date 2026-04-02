@@ -4,11 +4,12 @@
 /* PlanPulse theme overrides */
 :root {
   --pp-navy: #1B2A4A;
-  --pp-blue: #2E75B6;
-  --pp-green: #0F6E56;
+  --pp-blue: #185FA5;
+  --pp-green: #1D9E75;
   --pp-amber: #BA7517;
-  --pp-coral: #D85A30;
-  --pp-red: #E24B4A;
+  --pp-coral: #993C1D;
+  --pp-red: #A32D2D;
+  --pp-purple: #534AB7;
   --pp-bg: #F8F7F4;
   --pp-surface: #FFFFFF;
   --pp-text-secondary: #5F5E5A;

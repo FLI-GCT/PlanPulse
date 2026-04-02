@@ -2,10 +2,11 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Spinner } from '@fli-dgtf/flow-ui';
 import { LayoutDashboardIcon } from 'lucide-react';
 import { useGraphInitialLoad } from '@/providers/state/use-graph-initial-load';
+import { ErrorBoundary } from '@/components/shared/error-boundary';
 import { useGraphStore } from '@/providers/state/graph-store';
-import { KpiRow } from './components/kpi-row';
-import { CriticalOfsTable } from './components/critical-ofs-table';
-import { AlertsFeed } from './components/alerts-feed';
+import { PulseKpiRow } from './_pulse-kpi-row';
+import { PulseRiskTimeline } from './_pulse-risk-timeline';
+import { PulseRootCausePanel } from './_pulse-root-cause-panel';
 
 export const Route = createFileRoute('/_layout/')({
   component: PulseDashboard,
@@ -45,46 +46,41 @@ function SummaryBar() {
   );
 }
 
+function Header() {
+  return (
+    <div className="flex items-center gap-3">
+      <LayoutDashboardIcon
+        className="h-6 w-6"
+        style={{ color: 'var(--pp-navy)' }}
+      />
+      <h1
+        className="text-2xl font-bold"
+        style={{ color: 'var(--pp-navy)' }}
+      >
+        Tableau de bord
+      </h1>
+    </div>
+  );
+}
+
 function PulseDashboard() {
   const { isLoading: graphLoading } = useGraphInitialLoad();
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <LayoutDashboardIcon
-          className="h-6 w-6"
-          style={{ color: 'var(--pp-navy)' }}
-        />
-        <h1
-          className="text-2xl font-bold"
-          style={{ color: 'var(--pp-navy)' }}
-        >
-          Tableau de bord
-        </h1>
+    <ErrorBoundary>
+      <div className="flex flex-col gap-6 p-6">
+        <Header />
+        <PulseKpiRow />
+        {graphLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Spinner />
+          </div>
+        ) : (
+          <PulseRiskTimeline />
+        )}
+        <PulseRootCausePanel />
+        <SummaryBar />
       </div>
-
-      {/* Zone haute - KPIs */}
-      <KpiRow />
-
-      {/* Zone centrale - Table + Alertes */}
-      {graphLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Spinner />
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <CriticalOfsTable />
-          </div>
-          <div className="lg:col-span-1">
-            <AlertsFeed />
-          </div>
-        </div>
-      )}
-
-      {/* Zone basse - Summary stats */}
-      <SummaryBar />
-    </div>
+    </ErrorBoundary>
   );
 }

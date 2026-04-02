@@ -12,6 +12,7 @@ export interface GraphNode {
   statut: string;
   priorite: number | null;
   quantite: number;
+  fournisseur?: string | null;
 }
 
 export interface GraphEdge {

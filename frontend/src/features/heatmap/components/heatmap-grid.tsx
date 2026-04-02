@@ -9,19 +9,24 @@ import {
   endOfDay,
   parseISO,
   getISOWeek,
+  isWithinInterval,
 } from 'date-fns';
 import { fr } from 'date-fns/locale';
-import type { GraphNode, MarginResult } from '@/providers/state/graph-store';
+import type { GraphNode, GraphEdge, MarginResult } from '@/providers/state/graph-store';
+import { useUiStore } from '@/providers/state/ui-store';
+import { HeatmapCell } from './_heatmap-cell';
+import type { HeatmapCellProps } from './_heatmap-cell';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type TimeBucket = 'week' | 'day';
-export type GroupBy = 'client' | 'priorite' | 'statut';
+export type GroupBy = 'client' | 'priorite' | 'statut' | 'fournisseur';
 
 interface HeatmapGridProps {
   nodes: GraphNode[];
+  edges: GraphEdge[];
   margins: MarginResult[];
   timeBucket: TimeBucket;
   groupBy: GroupBy;
@@ -30,6 +35,7 @@ interface HeatmapGridProps {
 interface CellData {
   ofIds: string[];
   avgFloat: number | null;
+  criticalCount: number;
   floats: { nodeId: string; floatTotal: number }[];
 }
 
@@ -47,43 +53,84 @@ interface TooltipState {
 
 const WEEKS_SPAN = 6;
 
-function buildTimeBuckets(bucket: TimeBucket): { label: string; start: Date; end: Date }[] {
+function buildTimeBuckets(bucket: TimeBucket): { label: string; start: Date; end: Date; isCurrent: boolean }[] {
   const today = new Date();
-  const buckets: { label: string; start: Date; end: Date }[] = [];
+  const buckets: { label: string; start: Date; end: Date; isCurrent: boolean }[] = [];
 
   if (bucket === 'week') {
+    const currentWeek = getISOWeek(today);
     for (let i = 0; i < WEEKS_SPAN; i++) {
       const weekStart = startOfWeek(addWeeks(today, i), { weekStartsOn: 1 });
       const weekEnd = endOfWeek(addWeeks(today, i), { weekStartsOn: 1 });
+      const weekNum = getISOWeek(weekStart);
       buckets.push({
-        label: `S${getISOWeek(weekStart)} - ${format(weekStart, 'dd/MM', { locale: fr })}`,
+        label: `S${weekNum}`,
         start: weekStart,
         end: weekEnd,
+        isCurrent: weekNum === currentWeek,
       });
     }
   } else {
-    // 6 weeks = 42 days
     for (let i = 0; i < WEEKS_SPAN * 7; i++) {
       const day = addDays(today, i);
+      const isCurrent = isWithinInterval(today, {
+        start: startOfDay(day),
+        end: endOfDay(day),
+      });
       buckets.push({
         label: format(day, 'EEE dd/MM', { locale: fr }),
         start: startOfDay(day),
         end: endOfDay(day),
+        isCurrent,
       });
     }
   }
   return buckets;
 }
 
-function getGroupKey(node: GraphNode, groupBy: GroupBy): string {
+/** Build a lookup: ofId -> fournisseur name (from connected achat nodes via edges). */
+function buildFournisseurMap(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+): Map<string, string> {
+  const nodeMap = new Map<string, GraphNode>();
+  for (const n of nodes) nodeMap.set(n.id, n);
+
+  const result = new Map<string, string>();
+
+  for (const edge of edges) {
+    // An edge connecting an achat to an OF
+    const sourceNode = nodeMap.get(edge.sourceId);
+    const targetNode = nodeMap.get(edge.targetId);
+
+    if (sourceNode?.type === 'achat' && targetNode?.type === 'of') {
+      if (sourceNode.fournisseur) {
+        result.set(targetNode.id, sourceNode.fournisseur);
+      }
+    }
+    if (targetNode?.type === 'achat' && sourceNode?.type === 'of') {
+      if (targetNode.fournisseur) {
+        result.set(sourceNode.id, targetNode.fournisseur);
+      }
+    }
+  }
+  return result;
+}
+
+function getGroupKey(
+  node: GraphNode,
+  groupBy: GroupBy,
+  fournisseurMap: Map<string, string>,
+): string {
   switch (groupBy) {
     case 'client':
-      // Use articleId as a rough client/product grouping
       return node.articleId ?? 'Sans article';
     case 'priorite':
       return node.priorite != null ? `P${node.priorite}` : 'Non definie';
     case 'statut':
       return node.statut || 'Inconnu';
+    case 'fournisseur':
+      return fournisseurMap.get(node.id) ?? 'Sans fournisseur';
   }
 }
 
@@ -95,34 +142,35 @@ function getGroupLabel(groupBy: GroupBy): string {
       return 'Priorite';
     case 'statut':
       return 'Statut';
+    case 'fournisseur':
+      return 'Fournisseur';
   }
 }
 
-function floatToColor(avgFloat: number | null): string {
-  if (avgFloat === null) return '#E5E3DC'; // --pp-border (light gray)
-  if (avgFloat < 0) return 'var(--pp-red)';
-  if (avgFloat <= 1) return 'var(--pp-coral)';
-  if (avgFloat <= 5) return 'var(--pp-amber)';
-  return 'var(--pp-green)';
-}
-
-function floatToOpacityRange(count: number, maxCount: number): number {
-  if (maxCount === 0) return 0.3;
-  const ratio = count / maxCount;
-  return 0.3 + ratio * 0.7; // range [0.3, 1.0]
+function computeTrend(
+  currentAvg: number | null,
+  prevAvg: number | null,
+): HeatmapCellProps['trend'] {
+  if (currentAvg === null || prevAvg === null) return 'stable';
+  const delta = currentAvg - prevAvg;
+  if (delta > 0.5) return 'up';
+  if (delta < -0.5) return 'down';
+  return 'stable';
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-const CELL_HEIGHT = 36;
+const CELL_HEIGHT = 40;
 const ROW_LABEL_WIDTH = 140;
-const MIN_CELL_WIDTH = 50;
+const MIN_CELL_WIDTH = 60;
+const HEADER_HEIGHT = 32;
 
-export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGridProps) {
+export function HeatmapGrid({ nodes, edges, margins, timeBucket, groupBy }: HeatmapGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const selectNode = useUiStore((s) => s.selectNode);
 
   // Only OF nodes
   const ofNodes = useMemo(() => nodes.filter((n) => n.type === 'of'), [nodes]);
@@ -136,6 +184,12 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
     return m;
   }, [margins]);
 
+  // Fournisseur lookup
+  const fournisseurMap = useMemo(
+    () => buildFournisseurMap(nodes, edges),
+    [nodes, edges],
+  );
+
   // Time columns
   const timeCols = useMemo(() => buildTimeBuckets(timeBucket), [timeBucket]);
 
@@ -143,27 +197,25 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
   const rowGroups = useMemo(() => {
     const groups = new Set<string>();
     for (const node of ofNodes) {
-      groups.add(getGroupKey(node, groupBy));
+      groups.add(getGroupKey(node, groupBy, fournisseurMap));
     }
     const sorted = Array.from(groups).sort((a, b) => a.localeCompare(b, 'fr'));
-    // Ensure at least one row
     return sorted.length > 0 ? sorted : ['Aucune donnee'];
-  }, [ofNodes, groupBy]);
+  }, [ofNodes, groupBy, fournisseurMap]);
 
   // Build grid data: Map<`${rowIdx}-${colIdx}`, CellData>
-  const { grid, maxCount } = useMemo(() => {
+  const grid = useMemo(() => {
     const g = new Map<string, CellData>();
-    let max = 0;
 
     // Init all cells
     for (let r = 0; r < rowGroups.length; r++) {
       for (let c = 0; c < timeCols.length; c++) {
-        g.set(`${r}-${c}`, { ofIds: [], avgFloat: null, floats: [] });
+        g.set(`${r}-${c}`, { ofIds: [], avgFloat: null, criticalCount: 0, floats: [] });
       }
     }
 
     for (const node of ofNodes) {
-      const rowKey = getGroupKey(node, groupBy);
+      const rowKey = getGroupKey(node, groupBy, fournisseurMap);
       const rowIdx = rowGroups.indexOf(rowKey);
       if (rowIdx === -1) continue;
 
@@ -172,9 +224,7 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
 
       for (let c = 0; c < timeCols.length; c++) {
         const col = timeCols[c];
-        // Check if the OF overlaps with this time bucket
-        const overlaps =
-          nodeStart <= col.end && nodeEnd >= col.start;
+        const overlaps = nodeStart <= col.end && nodeEnd >= col.start;
 
         if (overlaps) {
           const key = `${rowIdx}-${c}`;
@@ -183,35 +233,43 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
           const margin = marginMap.get(node.id);
           if (margin) {
             cell.floats.push({ nodeId: node.id, floatTotal: margin.floatTotal });
+            if (margin.floatTotal <= 0) {
+              cell.criticalCount++;
+            }
           }
         }
       }
     }
 
-    // Compute averages and max count
+    // Compute averages
     for (const cell of g.values()) {
       if (cell.floats.length > 0) {
         cell.avgFloat =
           cell.floats.reduce((s, f) => s + f.floatTotal, 0) / cell.floats.length;
       }
-      if (cell.ofIds.length > max) max = cell.ofIds.length;
     }
 
-    return { grid: g, maxCount: max };
-  }, [ofNodes, marginMap, timeCols, rowGroups, groupBy]);
+    return g;
+  }, [ofNodes, marginMap, timeCols, rowGroups, groupBy, fournisseurMap]);
 
-  // SVG dimensions
-  const colCount = timeCols.length;
-  const headerHeight = timeBucket === 'day' ? 60 : 44;
-  const svgHeight = headerHeight + rowGroups.length * CELL_HEIGHT + 2;
+  // Handle cell click -> open detail drawer
+  const handleCellClick = useCallback(
+    (rowIdx: number, colIdx: number) => {
+      const cell = grid.get(`${rowIdx}-${colIdx}`);
+      if (cell && cell.ofIds.length > 0) {
+        selectNode(cell.ofIds[0]);
+      }
+    },
+    [grid, selectNode],
+  );
 
   const handleMouseEnter = useCallback(
-    (e: React.MouseEvent<SVGRectElement>, rowIdx: number, colIdx: number) => {
+    (e: React.MouseEvent<HTMLDivElement>, rowIdx: number, colIdx: number) => {
       const cell = grid.get(`${rowIdx}-${colIdx}`);
       if (!cell || cell.ofIds.length === 0) return;
-      const svgEl = (e.target as SVGElement).closest('svg');
-      if (!svgEl) return;
-      const rect = svgEl.getBoundingClientRect();
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
       setTooltip({
         x: e.clientX - rect.left + 12,
         y: e.clientY - rect.top - 8,
@@ -241,88 +299,116 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
   }
 
   return (
-    <div ref={containerRef} className="w-full overflow-x-auto">
-      <svg
-        width="100%"
-        viewBox={`0 0 ${ROW_LABEL_WIDTH + colCount * Math.max(MIN_CELL_WIDTH, 1)} ${svgHeight}`}
-        style={{ minWidth: ROW_LABEL_WIDTH + colCount * MIN_CELL_WIDTH }}
-        className="select-none"
+    <div ref={containerRef} className="relative w-full overflow-x-auto">
+      <table
+        className="border-separate select-none"
+        style={{
+          borderSpacing: 2,
+          minWidth: ROW_LABEL_WIDTH + timeCols.length * MIN_CELL_WIDTH,
+        }}
       >
         {/* ---- Column headers ---- */}
-        {timeCols.map((col, ci) => (
-          <text
-            key={ci}
-            x={ROW_LABEL_WIDTH + ci * MIN_CELL_WIDTH + MIN_CELL_WIDTH / 2}
-            y={headerHeight - 6}
-            textAnchor="middle"
-            fontSize={timeBucket === 'day' ? 9 : 11}
-            fill="var(--pp-text-secondary)"
-            style={{ userSelect: 'none' }}
-            transform={
-              timeBucket === 'day'
-                ? `rotate(-45, ${ROW_LABEL_WIDTH + ci * MIN_CELL_WIDTH + MIN_CELL_WIDTH / 2}, ${headerHeight - 6})`
-                : undefined
-            }
-          >
-            {col.label}
-          </text>
-        ))}
+        <thead>
+          <tr>
+            <th
+              className="text-left text-xs font-semibold"
+              style={{
+                width: ROW_LABEL_WIDTH,
+                minWidth: ROW_LABEL_WIDTH,
+                color: 'var(--pp-text-secondary)',
+                height: HEADER_HEIGHT,
+              }}
+            >
+              {getGroupLabel(groupBy)}
+            </th>
+            {timeCols.map((col, ci) => (
+              <th
+                key={ci}
+                className="text-center text-xs"
+                style={{
+                  minWidth: MIN_CELL_WIDTH,
+                  height: HEADER_HEIGHT,
+                  color: 'var(--pp-text-secondary)',
+                  fontWeight: col.isCurrent ? 700 : 400,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
 
         {/* ---- Rows ---- */}
-        {rowGroups.map((group, ri) => (
-          <g key={group} transform={`translate(0, ${headerHeight + ri * CELL_HEIGHT})`}>
-            {/* Row label */}
-            <text
-              x={ROW_LABEL_WIDTH - 8}
-              y={CELL_HEIGHT / 2 + 4}
-              textAnchor="end"
-              fontSize={11}
-              fill="var(--pp-navy)"
-              style={{ userSelect: 'none' }}
-            >
-              {group.length > 18 ? group.slice(0, 16) + '...' : group}
-            </text>
+        <tbody>
+          {rowGroups.map((group, ri) => (
+            <tr key={group}>
+              {/* Row label */}
+              <td
+                className="text-right text-xs pr-2"
+                style={{
+                  color: 'var(--pp-navy)',
+                  height: CELL_HEIGHT,
+                  maxWidth: ROW_LABEL_WIDTH,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={group}
+              >
+                {group.length > 18 ? group.slice(0, 16) + '...' : group}
+              </td>
 
-            {/* Cells */}
-            {timeCols.map((_, ci) => {
-              const cell = grid.get(`${ri}-${ci}`)!;
-              const hasData = cell.ofIds.length > 0;
-              const opacity = hasData ? floatToOpacityRange(cell.ofIds.length, maxCount) : 1;
+              {/* Cells */}
+              {timeCols.map((_, ci) => {
+                const cell = grid.get(`${ri}-${ci}`)!;
+                const hasData = cell.ofIds.length > 0;
 
-              return (
-                <rect
-                  key={ci}
-                  x={ROW_LABEL_WIDTH + ci * MIN_CELL_WIDTH + 1}
-                  y={1}
-                  width={MIN_CELL_WIDTH - 2}
-                  height={CELL_HEIGHT - 2}
-                  rx={3}
-                  fill={floatToColor(cell.avgFloat)}
-                  opacity={opacity}
-                  stroke="var(--pp-surface)"
-                  strokeWidth={1}
-                  className="cursor-pointer transition-opacity duration-150"
-                  onMouseEnter={(e) => handleMouseEnter(e, ri, ci)}
-                  onMouseMove={(e) => handleMouseEnter(e, ri, ci)}
-                  onMouseLeave={handleMouseLeave}
-                />
-              );
-            })}
-          </g>
-        ))}
+                // Compute trend by comparing with previous column
+                const prevCell = ci > 0 ? grid.get(`${ri}-${ci - 1}`) : null;
+                const trend = computeTrend(
+                  cell.avgFloat,
+                  prevCell?.avgFloat ?? null,
+                );
 
-        {/* ---- Y-axis label ---- */}
-        <text
-          x={4}
-          y={headerHeight - 10}
-          fontSize={10}
-          fontWeight={600}
-          fill="var(--pp-text-secondary)"
-          style={{ userSelect: 'none' }}
-        >
-          {getGroupLabel(groupBy)}
-        </text>
-      </svg>
+                return (
+                  <td
+                    key={ci}
+                    style={{
+                      width: MIN_CELL_WIDTH,
+                      minWidth: MIN_CELL_WIDTH,
+                      height: CELL_HEIGHT,
+                      padding: 0,
+                    }}
+                    onMouseEnter={(e) => handleMouseEnter(e, ri, ci)}
+                    onMouseMove={(e) => handleMouseEnter(e, ri, ci)}
+                    onMouseLeave={handleMouseLeave}
+                  >
+                    {hasData ? (
+                      <HeatmapCell
+                        ofCount={cell.ofIds.length}
+                        criticalCount={cell.criticalCount}
+                        avgMargin={cell.avgFloat ?? 0}
+                        trend={trend}
+                        onClick={() => handleCellClick(ri, ci)}
+                      />
+                    ) : (
+                      <div
+                        className="h-full w-full"
+                        style={{
+                          backgroundColor: '#E5E3DC',
+                          borderRadius: 3,
+                          minHeight: CELL_HEIGHT - 4,
+                        }}
+                      />
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {/* ---- Tooltip ---- */}
       {tooltip && (
@@ -342,6 +428,9 @@ export function HeatmapGrid({ nodes, margins, timeBucket, groupBy }: HeatmapGrid
             {tooltip.cell.ofIds.length} OF{tooltip.cell.ofIds.length > 1 ? 's' : ''}
             {tooltip.cell.avgFloat !== null && (
               <> &middot; Marge moy. : {tooltip.cell.avgFloat.toFixed(1)}j</>
+            )}
+            {tooltip.cell.criticalCount > 0 && (
+              <> &middot; {tooltip.cell.criticalCount} critique{tooltip.cell.criticalCount > 1 ? 's' : ''}</>
             )}
           </div>
           <ul className="mt-1 max-h-32 overflow-y-auto text-xs" style={{ color: 'var(--pp-navy)' }}>
