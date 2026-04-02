@@ -1,9 +1,25 @@
+import { useEffect, useState } from 'react';
 import { useSocket } from '@/providers/socket/socket-context';
 
 export function ConnectionBanner() {
   const { isConnected } = useSocket();
+  const [showBanner, setShowBanner] = useState(false);
 
-  if (isConnected) return null;
+  useEffect(() => {
+    if (isConnected) {
+      setShowBanner(false);
+      return;
+    }
+
+    // Grace period: don't show the banner during initial connection (3s)
+    const timer = setTimeout(() => {
+      if (!isConnected) setShowBanner(true);
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [isConnected]);
+
+  if (!showBanner) return null;
 
   return (
     <div
