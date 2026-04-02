@@ -8,6 +8,7 @@ import { GraphModule } from 'src/graph/graph.module';
 import { KpiModule } from 'src/kpi/kpi.module';
 import { NomenclatureModule } from 'src/nomenclature/nomenclature.module';
 import { OfModule } from 'src/of/of.module';
+import { ScenarioModule } from 'src/scenario/scenario.module';
 import { WsModule } from 'src/ws/ws.module';
 import { CommonModule } from './common.module';
 import { envVariables } from './config';
@@ -29,6 +30,7 @@ import { envVariables } from './config';
     NomenclatureModule,
     KpiModule,
     WsModule,
+    ScenarioModule,
   ],
 })
 export class AppModule {}
