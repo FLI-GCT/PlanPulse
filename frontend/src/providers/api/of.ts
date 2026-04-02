@@ -37,3 +37,33 @@ export const useMoveOfMutation = () =>
     }) =>
       fetcher.patch(`/of/${id}/move`, { newDateDebut }).then((r) => r.data),
   });
+
+export const useBulkMoveMutation = () =>
+  useMutation({
+    mutationFn: (body: { ofIds: string[]; deltaJours: number }) =>
+      fetcher
+        .post<{ movedCount: number; impactedCount: number }>(
+          '/of/bulk-move',
+          body,
+        )
+        .then((r) => r.data),
+  });
+
+export const useBulkMovePreviewMutation = () =>
+  useMutation({
+    mutationFn: (body: { ofIds: string[]; deltaJours: number }) =>
+      fetcher
+        .post<{ affectedNodes: unknown[]; impactedCommandCount: number }>(
+          '/of/bulk-move-preview',
+          body,
+        )
+        .then((r) => r.data),
+  });
+
+export const useBulkBlockMutation = () =>
+  useMutation({
+    mutationFn: (body: { ofIds: string[] }) =>
+      fetcher
+        .post<{ blockedCount: number }>('/of/bulk-block', body)
+        .then((r) => r.data),
+  });

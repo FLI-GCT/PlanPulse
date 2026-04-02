@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { fetcher } from './fetcher';
 
 export const achatKeys = {
@@ -23,4 +23,27 @@ export const useAchatAlertesQuery = () =>
   useQuery({
     queryKey: achatKeys.alertes(),
     queryFn: () => fetcher.get('/achat/alertes').then((r) => r.data),
+  });
+
+export interface SupplierRisk {
+  name: string;
+  totalAchats: number;
+  achatsEnRetard: number;
+  penuriesActives: number;
+  dependentOfIds: string[];
+  dependentCommandCount: number;
+  riskScore: number;
+}
+
+export const useFournisseursRiskQuery = () =>
+  useQuery<{ suppliers: SupplierRisk[] }>({
+    queryKey: [...achatKeys.all, 'fournisseurs-risk'],
+    queryFn: () =>
+      fetcher.get('/achat/fournisseurs-risk').then((r) => r.data),
+  });
+
+export const useBulkMovePreviewMutation = () =>
+  useMutation({
+    mutationFn: (data: { ofIds: string[]; deltaJours: number }) =>
+      fetcher.post('/of/bulk-move-preview', data).then((r) => r.data),
   });

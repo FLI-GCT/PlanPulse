@@ -21,6 +21,7 @@
     "@xyflow/react": "^12.6.0",
     "axios": "^1.12.2",
     "d3": "^7.9.0",
+    "d3-sankey": "^0.12.3",
     "dagre": "^0.8.5",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.12.1",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@tanstack/router-plugin": "^1.131.43",
     "@types/d3": "^7.4.3",
+    "@types/d3-sankey": "^0.12.5",
     "@types/dagre": "^0.7.54",
     "@types/node": "^24.4.0",
     "@types/react": "^19.2.7",

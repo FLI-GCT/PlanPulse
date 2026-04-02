@@ -54,6 +54,106 @@ export class AchatController {
     return { data, total, page, pageSize };
   }
 
+  @Get('fournisseurs-risk')
+  @ApiOperation({ summary: 'Analyse de risque par fournisseur' })
+  async fournisseursRisk() {
+    const achats = await this.prisma.achat.findMany({
+      where: { statut: { not: 'ANNULE' } },
+      include: { article: true },
+    });
+
+    const alerts = await this.prisma.alerte.findMany({
+      where: { dismissed: false },
+    });
+
+    // Group by fournisseur
+    const supplierMap = new Map<
+      string,
+      {
+        totalAchats: number;
+        achatsEnRetard: number;
+        achatIds: string[];
+      }
+    >();
+
+    for (const achat of achats) {
+      if (!supplierMap.has(achat.fournisseur)) {
+        supplierMap.set(achat.fournisseur, {
+          totalAchats: 0,
+          achatsEnRetard: 0,
+          achatIds: [],
+        });
+      }
+      const s = supplierMap.get(achat.fournisseur)!;
+      s.totalAchats++;
+      s.achatIds.push(achat.id);
+      if (achat.statut === 'EN_RETARD') s.achatsEnRetard++;
+    }
+
+    // Check penuries from alerts
+    const penurieAlerts = alerts.filter((a) => a.type === 'penurie');
+
+    // Build result with dependent OFs (query dependance table)
+    const deps = await this.prisma.dependance.findMany({
+      where: { sourceType: 'achat' },
+    });
+
+    const achatToOfs = new Map<string, string[]>();
+    for (const dep of deps) {
+      if (!achatToOfs.has(dep.sourceId))
+        achatToOfs.set(dep.sourceId, []);
+      achatToOfs.get(dep.sourceId)!.push(dep.targetId);
+    }
+
+    const suppliers: Array<{
+      name: string;
+      totalAchats: number;
+      achatsEnRetard: number;
+      penuriesActives: number;
+      dependentOfIds: string[];
+      dependentCommandCount: number;
+      riskScore: number;
+    }> = [];
+    for (const [name, data] of supplierMap) {
+      const dependentOfIds = new Set<string>();
+      for (const achatId of data.achatIds) {
+        for (const ofId of achatToOfs.get(achatId) ?? []) {
+          dependentOfIds.add(ofId);
+        }
+      }
+
+      // Count penuries for this supplier's articles
+      const penuriesActives = penurieAlerts.filter((a) => {
+        const noeuds = a.noeuds as string[];
+        return (
+          Array.isArray(noeuds) &&
+          data.achatIds.some((id) => noeuds.includes(id))
+        );
+      }).length;
+
+      const riskScore = Math.min(
+        100,
+        Math.round(
+          (data.achatsEnRetard / Math.max(data.totalAchats, 1)) * 60 +
+            (penuriesActives > 0 ? 40 : 0),
+        ),
+      );
+
+      suppliers.push({
+        name,
+        totalAchats: data.totalAchats,
+        achatsEnRetard: data.achatsEnRetard,
+        penuriesActives,
+        dependentOfIds: [...dependentOfIds],
+        dependentCommandCount: 0,
+        riskScore,
+      });
+    }
+
+    suppliers.sort((a, b) => b.riskScore - a.riskScore);
+    return { suppliers };
+  }
+
   @Get('alertes')
   @ApiOperation({ summary: 'Achats en anomalie (retard, obsolete, penurie)' })
   async alertes() {

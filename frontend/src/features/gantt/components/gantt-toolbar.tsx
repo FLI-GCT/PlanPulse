@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useUiStore } from '@/providers/state/ui-store';
 import { useGraphStore } from '@/providers/state/graph-store';
+import { GanttResolutionSelector } from './gantt-resolution-selector';
 
 // ---------------------------------------------------------------------------
 // Zoom presets
@@ -126,6 +127,15 @@ export function GanttToolbar() {
         borderColor: 'var(--pp-border)',
       }}
     >
+      {/* ---- Resolution selector ---- */}
+      <GanttResolutionSelector />
+
+      {/* Separator */}
+      <div
+        className="mx-1 h-6 w-px"
+        style={{ backgroundColor: 'var(--pp-border)' }}
+      />
+
       {/* ---- Zoom presets ---- */}
       <div className="flex items-center gap-1.5">
         <ZoomInIcon

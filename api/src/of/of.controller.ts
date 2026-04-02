@@ -10,6 +10,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { addDays, parseISO } from 'date-fns';
 import { PrismaService } from 'src/_shared/adapters/prisma/prisma.service';
 import { PropagationService } from 'src/graph/services/propagation.service';
 import { CriticalPathService } from 'src/graph/services/critical-path.service';
@@ -312,6 +313,105 @@ export class OfController {
     const descendants: Array<{ id: string; type: string; depth: number }> = [];
     await this.collectDescendants(id, descendants, new Set(), 1);
     return { data: descendants };
+  }
+
+  @Post('bulk-move')
+  @ApiOperation({ summary: "Deplacer un lot d'OFs de N jours" })
+  async bulkMove(@Body() body: { ofIds: string[]; deltaJours: number }) {
+    let movedCount = 0;
+    let impactedCount = 0;
+
+    // Sort ofIds by topological order to propagate correctly
+    const topoOrder = this.graphService.topologicalSort();
+    const ofSet = new Set(body.ofIds);
+    const sortedIds = topoOrder.filter((id) => ofSet.has(id));
+
+    for (const ofId of sortedIds) {
+      const node = this.graphService.getNode(ofId);
+      if (!node) continue;
+      const newDateDebut = addDays(
+        parseISO(node.dateDebut),
+        body.deltaJours,
+      ).toISOString();
+      const result = await this.propagationService.propagateCommit(
+        ofId,
+        newDateDebut,
+      );
+      movedCount++;
+      impactedCount += result.length;
+    }
+
+    await this.criticalPathService.recalculate();
+    return { movedCount, impactedCount };
+  }
+
+  @Post('bulk-move-preview')
+  @ApiOperation({
+    summary: "Previsualiser l'impact du deplacement d'un lot d'OFs",
+  })
+  async bulkMovePreview(
+    @Body() body: { ofIds: string[]; deltaJours: number },
+  ) {
+    const topoOrder = this.graphService.topologicalSort();
+    const ofSet = new Set(body.ofIds);
+    const sortedIds = topoOrder.filter((id) => ofSet.has(id));
+
+    const allAffected: Array<{
+      nodeId: string;
+      oldDateDebut: string;
+      newDateDebut: string;
+      oldDateFin: string;
+      newDateFin: string;
+      deltaJours: number;
+    }> = [];
+    const seenIds = new Set<string>();
+
+    for (const ofId of sortedIds) {
+      const node = this.graphService.getNode(ofId);
+      if (!node) continue;
+      const newDateDebut = addDays(
+        parseISO(node.dateDebut),
+        body.deltaJours,
+      ).toISOString();
+      const preview = this.propagationService.propagatePreview(
+        ofId,
+        newDateDebut,
+      );
+      for (const p of preview) {
+        if (!seenIds.has(p.nodeId)) {
+          seenIds.add(p.nodeId);
+          allAffected.push(p);
+        }
+      }
+    }
+
+    // Count distinct root OFs (commandes) impacted
+    const rootOfs = await this.prisma.ordreFabrication.findMany({
+      where: {
+        id: { in: allAffected.map((a) => a.nodeId) },
+        parentOfId: null,
+      },
+      select: { id: true },
+    });
+
+    return {
+      affectedNodes: allAffected,
+      impactedCommandCount: rootOfs.length,
+    };
+  }
+
+  @Post('bulk-block')
+  @ApiOperation({ summary: "Bloquer un lot d'OFs (statut ANNULE)" })
+  async bulkBlock(@Body() body: { ofIds: string[] }) {
+    let blockedCount = 0;
+    for (const ofId of body.ofIds) {
+      await this.prisma.ordreFabrication.update({
+        where: { id: ofId },
+        data: { statut: 'ANNULE' },
+      });
+      blockedCount++;
+    }
+    return { blockedCount };
   }
 
   private async collectAncestors(

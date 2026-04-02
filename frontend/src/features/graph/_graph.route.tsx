@@ -1,6 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Spinner } from '@fli-dgtf/flow-ui';
-import { NetworkIcon } from 'lucide-react';
+import { Spinner, Tabs, TabsList, TabsTrigger } from '@fli-dgtf/flow-ui';
+import {
+  NetworkIcon,
+  TruckIcon,
+  WavesIcon,
+  GitBranchIcon,
+} from 'lucide-react';
 import { useGraphInitialLoad } from '@/providers/state/use-graph-initial-load';
 import { useGraphNavigation } from './hooks/use-graph-navigation';
 import { GraphBreadcrumb } from './components/graph-breadcrumb';
@@ -11,7 +16,9 @@ import { QuestionView } from './components/question/question-view';
 import { StrategicToolbar } from './components/strategic/strategic-toolbar';
 import { BubbleMap } from './components/strategic/bubble-map';
 import { FlowView } from './components/strategic/flow-view';
-import { useUiStore } from '@/providers/state/ui-store';
+import { SuppliersView } from './components/_graph-suppliers';
+import { SankeyView } from './components/_graph-sankey';
+import { useUiStore, type GraphTab } from '@/providers/state/ui-store';
 import { ErrorBoundary } from '@/components/shared/error-boundary';
 
 export const Route = createFileRoute('/_layout/graph')({
@@ -33,10 +40,43 @@ function StrategicView() {
   );
 }
 
-// ── Main graph view with level-based routing ─────────────────────
+// ── Reseau OF view (existing multi-level navigation) ─────────────
+function ReseauView() {
+  const { graphNav } = useGraphNavigation();
+
+  return (
+    <>
+      {graphNav.level === 1 && <StrategicView />}
+
+      {graphNav.level === 2 && (
+        <>
+          <CommandSidebar />
+          {graphNav.commandOfFinalId ? (
+            <CommandGraph ofFinalId={graphNav.commandOfFinalId} />
+          ) : (
+            <div className="flex flex-1 items-center justify-center">
+              <span style={{ color: 'var(--pp-text-secondary)' }}>
+                Selectionnez une commande client dans le panneau de gauche
+              </span>
+            </div>
+          )}
+        </>
+      )}
+
+      {graphNav.level === '3a' && graphNav.focusNodeId && (
+        <FocusGraph focusNodeId={graphNav.focusNodeId} />
+      )}
+
+      {graphNav.level === '3b' && <QuestionView />}
+    </>
+  );
+}
+
+// ── Main graph view with tab + level-based routing ───────────────
 function GraphView() {
   const { isLoading } = useGraphInitialLoad();
-  const { graphNav } = useGraphNavigation();
+  const graphTab = useUiStore((s) => s.graphNav.graphTab);
+  const setGraphTab = useUiStore((s) => s.setGraphTab);
 
   if (isLoading) {
     return (
@@ -68,33 +108,37 @@ function GraphView() {
           </h1>
         </div>
 
-        {/* Breadcrumb */}
-        <GraphBreadcrumb />
+        {/* Tab navigation */}
+        <div className="shrink-0 px-6 pb-2">
+          <Tabs
+            value={graphTab}
+            onValueChange={(v) => setGraphTab(v as GraphTab)}
+          >
+            <TabsList>
+              <TabsTrigger value="fournisseurs">
+                <TruckIcon className="mr-1.5 h-3.5 w-3.5" />
+                Fournisseurs
+              </TabsTrigger>
+              <TabsTrigger value="sankey">
+                <WavesIcon className="mr-1.5 h-3.5 w-3.5" />
+                Flux Sankey
+              </TabsTrigger>
+              <TabsTrigger value="reseau">
+                <GitBranchIcon className="mr-1.5 h-3.5 w-3.5" />
+                Reseau OF
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {/* Breadcrumb (only for reseau tab) */}
+        {graphTab === 'reseau' && <GraphBreadcrumb />}
 
         {/* Content area */}
         <div className="flex flex-1 overflow-hidden" style={{ minHeight: 0 }}>
-          {graphNav.level === 1 && <StrategicView />}
-
-          {graphNav.level === 2 && (
-            <>
-              <CommandSidebar />
-              {graphNav.commandOfFinalId ? (
-                <CommandGraph ofFinalId={graphNav.commandOfFinalId} />
-              ) : (
-                <div className="flex flex-1 items-center justify-center">
-                  <span style={{ color: 'var(--pp-text-secondary)' }}>
-                    Selectionnez une commande client dans le panneau de gauche
-                  </span>
-                </div>
-              )}
-            </>
-          )}
-
-          {graphNav.level === '3a' && graphNav.focusNodeId && (
-            <FocusGraph focusNodeId={graphNav.focusNodeId} />
-          )}
-
-          {graphNav.level === '3b' && <QuestionView />}
+          {graphTab === 'fournisseurs' && <SuppliersView />}
+          {graphTab === 'sankey' && <SankeyView />}
+          {graphTab === 'reseau' && <ReseauView />}
         </div>
       </div>
     </ErrorBoundary>

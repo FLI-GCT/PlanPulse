@@ -2,9 +2,13 @@ import { createFileRoute } from '@tanstack/react-router';
 import { Spinner } from '@fli-dgtf/flow-ui';
 import { BarChart3Icon } from 'lucide-react';
 import { useGraphInitialLoad } from '@/providers/state/use-graph-initial-load';
+import { useUiStore } from '@/providers/state/ui-store';
 import { ErrorBoundary } from '@/components/shared/error-boundary';
 import { GanttToolbar } from './components/gantt-toolbar';
 import { GanttChart } from './components/gantt-chart';
+import { GanttMacro } from './components/gantt-macro';
+import { GanttSegment } from './components/gantt-segment';
+import { GanttBulkActions } from './components/gantt-bulk-actions';
 
 export const Route = createFileRoute('/_layout/gantt')({
   component: GanttView,
@@ -12,6 +16,7 @@ export const Route = createFileRoute('/_layout/gantt')({
 
 function GanttView() {
   const { isLoading, error } = useGraphInitialLoad();
+  const ganttResolution = useUiStore((s) => s.ganttResolution);
 
   if (isLoading) {
     return (
@@ -78,9 +83,14 @@ function GanttView() {
               backgroundColor: 'var(--pp-surface)',
             }}
           >
-            <GanttChart />
+            {ganttResolution === 'macro' && <GanttMacro />}
+            {ganttResolution === 'segment' && <GanttSegment />}
+            {ganttResolution === 'of' && <GanttChart />}
           </div>
         </div>
+
+        {/* Bulk actions (sticky bottom) */}
+        <GanttBulkActions />
       </div>
     </ErrorBoundary>
   );
