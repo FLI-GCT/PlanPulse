@@ -1,21 +1,7 @@
 import { useMemo, useRef, useEffect, useCallback } from 'react';
+import { sankey, sankeyLinkHorizontal } from 'd3-sankey';
 import { useGraphStore } from '@/providers/state/graph-store';
 import { useUiStore } from '@/providers/state/ui-store';
-
-// Attempt to import d3-sankey. If it's not installed, we'll show a placeholder.
-let sankey: typeof import('d3-sankey').sankey | undefined;
-let sankeyLinkHorizontal:
-  | typeof import('d3-sankey').sankeyLinkHorizontal
-  | undefined;
-
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const d3Sankey = require('d3-sankey');
-  sankey = d3Sankey.sankey;
-  sankeyLinkHorizontal = d3Sankey.sankeyLinkHorizontal;
-} catch {
-  // d3-sankey not installed
-}
 
 interface SankeyNode {
   id: string;
@@ -46,26 +32,6 @@ function worstMarginColor(
 
 export function SankeyView() {
   const setGraphTab = useUiStore((s) => s.setGraphTab);
-
-  if (!sankey || !sankeyLinkHorizontal) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3">
-        <p
-          className="text-sm"
-          style={{ color: 'var(--pp-text-secondary)' }}
-        >
-          Installer <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">d3-sankey</code> pour activer cette vue.
-        </p>
-        <p
-          className="font-mono text-xs"
-          style={{ color: 'var(--pp-text-secondary)' }}
-        >
-          yarn add d3-sankey @types/d3-sankey
-        </p>
-      </div>
-    );
-  }
-
   return <SankeyDiagram onNavigateToReseau={() => setGraphTab('reseau')} />;
 }
 

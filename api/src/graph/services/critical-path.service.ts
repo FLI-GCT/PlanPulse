@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { parseISO, addDays, differenceInCalendarDays, formatISO } from 'date-fns';
 import { PrismaService } from 'src/_shared/adapters/prisma/prisma.service';
 import { CriticalPathResult, MarginResult } from 'src/graph/_entities';
@@ -15,6 +15,7 @@ export class CriticalPathService {
   private readonly logger = new Logger(CriticalPathService.name);
 
   constructor(
+    @Inject(forwardRef(() => GraphService))
     private readonly graph: GraphService,
     private readonly prisma: PrismaService,
   ) {}

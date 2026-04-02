@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { parseISO } from 'date-fns';
 import { PrismaService } from 'src/_shared/adapters/prisma/prisma.service';
 import { GraphService } from './graph.service';
@@ -21,6 +21,7 @@ export class AllocationService {
   private readonly logger = new Logger(AllocationService.name);
 
   constructor(
+    @Inject(forwardRef(() => GraphService))
     private readonly graph: GraphService,
     private readonly prisma: PrismaService,
   ) {}
